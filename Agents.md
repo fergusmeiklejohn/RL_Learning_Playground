@@ -1,5 +1,11 @@
 # Session Notes: Simple Atari RL Playground
 
+## Overview
+This repo is a vehicle for the user to learn RL. Please explain the process, the terms used and the code, and the user will learn by doing and observing. By the end of this session, the user should understand how to train a simple Atari agent using different methods, and understand the key decisions made, evaluations, and actions taken.
+
+## Process
+We will create and keep updated an experiments.md file to track the training and evaluation experiments we run, the parameters and/or methods used, and the results obtained. This will help us keep track of what works and what doesn't.
+
 ## Environment & Tooling
 - Always use the project Conda environment `simple-game`; update (instead of recreating) with `conda env update -n simple-game -f env/environment.yml --prune`.
 - When you need Python directly from the env (outside `conda run`), call `/Users/fergusmeiklejohn/miniconda3/envs/simple-game/bin/python`.
