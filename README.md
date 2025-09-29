@@ -80,6 +80,11 @@ See below for details on each component.
 - Implement logging via TensorBoard and periodic model checkpointing.  Checkpoints allow resuming training and comparing policies across experiments.
 - Record evaluation episodes using Gymnasium wrappers with `RecordVideo` for qualitative review.
 
+### Apple Silicon specifics
+
+- Stable-Baselines3's default `NatureCNN` can crash on Apple Silicon when combined with PyTorch's MPS backend. We bundle `src/simple_game/policies.py` with a compatible drop-in replacement (`SimpleNatureCNN`) and wire it up via `policy_kwargs`.
+- When writing custom scripts, import `gymnasium` lazily (as done in `train.py`) to avoid an upstream segfault that appears when `gymnasium` is imported before SB3 initialises its policies on MPS.
+
 ### Scaling up
 
 - Once PPO baseline works, experiment with **A2C** (faster iteration) or **DQN** (discrete action baseline).  

@@ -33,6 +33,8 @@ model:
   ent_coef: 0.01
   vf_coef: 0.5
   max_grad_norm: 0.5
+  policy_kwargs:
+    features_extractor_class: src.simple_game.policies.SimpleNatureCNN
 
 logging:
   tensorboard_log: runs/tensorboard
