@@ -1,0 +1,50 @@
+# Baseline PPO run for BreakoutNoFrameskip-v4
+experiment:
+  name: breakout_ppo_baseline
+  seed: 42
+  total_timesteps: 2000000
+  eval_interval: 100000
+  eval_episodes: 5
+  save_interval: 500000
+  rollout_video: true
+  video_length: 2000
+  notes: "Initial PPO baseline using default SB3 Atari hyperparameters"
+
+environment:
+  id: ALE/Breakout-v5
+  frame_skip: 4
+  frame_stack: 4
+  noop_max: 30
+  terminate_on_life_loss: true
+  render_mode: null
+
+model:
+  algo: ppo
+  policy: CnnPolicy
+  n_envs: 8
+  vec_env_class: dummy  # dummy avoids multiprocessing issues on macOS + MPS
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 4
+  learning_rate: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.1
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+logging:
+  tensorboard_log: runs/tensorboard
+  checkpoint_dir: runs/checkpoints
+  monitor_dir: runs/monitor
+  video_dir: runs/videos
+  console_interval: 10000
+  verbose: 1
+  save_replay_buffer: false
+  enable_profiler: false
+
+hardware:
+  device: auto  # "auto" will choose mps if available, else cpu
+  num_threads: 8
+  mps_fallback: true

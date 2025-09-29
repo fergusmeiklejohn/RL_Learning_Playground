@@ -1,0 +1,30 @@
+name: simple-game
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - cmake
+  - swig
+  - sdl2
+  - libpng
+  - libjpeg-turbo
+  - freetype
+  - numpy
+  - pillow
+  - tqdm
+  - matplotlib
+  - psutil
+  - pip:
+      - torch==2.3.0
+      - torchvision==0.18.0
+      - torchaudio==2.3.0
+      - gymnasium[atari,accept-rom-license]==0.29.1
+      - stable-baselines3==2.3.0
+      - autorom[accept-rom-license]==0.4.2
+      - tensorboard==2.16.2
+      - moviepy==1.0.3
+      - pygame==2.5.2
+      - hydra-core==1.3.2
+      - pyyaml==6.0.1
