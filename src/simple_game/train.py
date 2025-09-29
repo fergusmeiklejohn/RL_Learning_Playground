@@ -13,7 +13,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_atari_env
-from stable_baselines3.common.vec_env import VecFrameStack, VecTransposeImage
+from stable_baselines3.common.vec_env import VecFrameStack, VecTransposeImage, VecVideoRecorder
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 
@@ -46,18 +46,27 @@ def resolve_policy_kwargs(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
     return resolved
 
 
-def build_env(cfg: Dict[str, Any], mode: str) -> VecEnv:
-    seed_offset = 0 if mode == "train" else 10_000
+def build_env(
+    cfg: Dict[str, Any],
+    mode: str,
+    *,
+    n_envs: Optional[int] = None,
+    seed_offset: Optional[int] = None,
+    monitor_dir: Optional[str] = None,
+) -> VecEnv:
+    if seed_offset is None:
+        seed_offset = 0 if mode == "train" else 10_000
+
     env = make_atari_env(
         cfg["environment"]["id"],
-        n_envs=cfg["model"]["n_envs"],
+        n_envs=n_envs or cfg["model"]["n_envs"],
         seed=cfg["experiment"]["seed"] + seed_offset,
         wrapper_kwargs={
             "noop_max": cfg["environment"].get("noop_max", 30),
             "frame_skip": cfg["environment"].get("frame_skip", 4),
             "terminal_on_life_loss": cfg["environment"].get("terminate_on_life_loss", False),
         },
-        monitor_dir=cfg["logging"].get("monitor_dir"),
+        monitor_dir=monitor_dir if monitor_dir is not None else cfg["logging"].get("monitor_dir"),
     )
     env = VecFrameStack(env, n_stack=cfg["environment"].get("frame_stack", 4))
     return VecTransposeImage(env)
@@ -96,26 +105,38 @@ def record_video(cfg: Dict[str, Any], model: PPO) -> None:
     if not cfg["experiment"].get("rollout_video"):
         return
 
-    from gymnasium import wrappers, make
-
     video_dir = Path(cfg["logging"]["video_dir"]) / cfg["experiment"]["name"]
     video_dir.mkdir(parents=True, exist_ok=True)
 
-    env = make(cfg["environment"]["id"], render_mode="rgb_array")
-    env = wrappers.RecordVideo(env, video_folder=str(video_dir), name_prefix="eval")
+    monitor_path = video_dir / "monitor"
+    monitor_path.mkdir(parents=True, exist_ok=True)
 
-    obs, _ = env.reset(seed=cfg["experiment"]["seed"] + 2024)
-    done = False
-    steps = 0
+    video_env = build_env(
+        cfg,
+        mode="eval",
+        n_envs=1,
+        seed_offset=cfg["experiment"].get("video_seed_offset", 2024),
+        monitor_dir=str(monitor_path),
+    )
+
     max_steps = cfg["experiment"].get("video_length", 2000)
+    prefix = cfg["experiment"].get("video_name", "eval")
+    video_env = VecVideoRecorder(
+        video_env,
+        str(video_dir),
+        record_video_trigger=lambda step: step == 0,
+        video_length=max_steps,
+        name_prefix=prefix,
+    )
 
-    while not done and steps < max_steps:
+    obs = video_env.reset()
+    for _ in range(max_steps):
         action, _ = model.predict(obs, deterministic=True)
-        obs, _, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
-        steps += 1
+        obs, _, dones, _ = video_env.step(action)
+        if dones.any():
+            break
 
-    env.close()
+    video_env.close()
 
 
 def main(config_path: Path) -> None:
