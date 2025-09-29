@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gymnasium as gym
+import numpy as np
 import torch
 import yaml
 from stable_baselines3 import PPO
@@ -16,6 +17,28 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecFrameStack
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
+from stable_baselines3.common import utils as sb3_utils
+
+
+_ORIGINAL_OBS_AS_TENSOR = sb3_utils.obs_as_tensor
+
+
+def _obs_as_tensor_mps_safe(obs: Any, device: torch.device) -> Any:
+    """Work around torch.mps segfaults when converting numpy arrays directly."""
+
+    if torch.device(device).type != "mps":
+        return _ORIGINAL_OBS_AS_TENSOR(obs, device)
+
+    if isinstance(obs, np.ndarray):
+        return torch.as_tensor(obs).to(device)
+
+    if isinstance(obs, dict):
+        return {key: torch.as_tensor(val).to(device) for key, val in obs.items()}
+
+    raise TypeError(f"Unsupported observation type: {type(obs)!r}")
+
+
+sb3_utils.obs_as_tensor = _obs_as_tensor_mps_safe
 
 
 class ProgressConsoleCallback(BaseCallback):

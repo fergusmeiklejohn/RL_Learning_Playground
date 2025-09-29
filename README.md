@@ -37,9 +37,10 @@ This project aims to train reinforcement learning agents on classic Atari games 
 
 ## Getting Started
 
-1. **Create the Conda env**
+1. **Create or update the Conda env**
    ```bash
-   conda env create -f env/environment.yml
+   conda env create -f env/environment.yml          # first time
+   conda env update -n simple-game -f env/environment.yml --prune  # later updates
    conda activate simple-game
    ```
 2. **Install Atari ROMs**
@@ -91,4 +92,3 @@ See below for details on each component.
 - Flesh out `src/simple_game/train.py` with CLI and training loop.  
 - Add evaluation script to visualize agent behavior.  
 - Document results and insights in `docs/`.
-
