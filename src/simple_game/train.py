@@ -9,12 +9,14 @@ from typing import Any, Dict, Optional
 
 import torch
 import yaml
-from stable_baselines3 import PPO
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_atari_env
 from stable_baselines3.common.vec_env import VecFrameStack, VecTransposeImage, VecVideoRecorder
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
+
+from .algos import PrioritizedDQN
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -53,6 +55,7 @@ def build_env(
     n_envs: Optional[int] = None,
     seed_offset: Optional[int] = None,
     monitor_dir: Optional[str] = None,
+    event_wrapper: bool = False,
 ) -> VecEnv:
     if seed_offset is None:
         seed_offset = 0 if mode == "train" else 10_000
@@ -68,6 +71,12 @@ def build_env(
         },
         monitor_dir=monitor_dir if monitor_dir is not None else cfg["logging"].get("monitor_dir"),
     )
+    if event_wrapper:
+        from .wrappers import BreakoutEventWrapper
+
+        for idx in range(env.num_envs):
+            env.envs[idx] = BreakoutEventWrapper(env.envs[idx])
+
     env = VecFrameStack(env, n_stack=cfg["environment"].get("frame_stack", 4))
     return VecTransposeImage(env)
 
@@ -150,26 +159,77 @@ def main(config_path: Path) -> None:
     train_env = build_env(cfg, mode="train")
     eval_env = build_env(cfg, mode="eval")
 
+    algo = cfg["model"].get("algo", "ppo").lower()
+
     policy_kwargs = resolve_policy_kwargs(cfg["model"].get("policy_kwargs"))
 
-    model = PPO(
-        cfg["model"].get("policy", "CnnPolicy"),
-        train_env,
-        learning_rate=cfg["model"].get("learning_rate", 2.5e-4),
-        n_steps=cfg["model"].get("n_steps", 128),
-        batch_size=cfg["model"].get("batch_size", 256),
-        n_epochs=cfg["model"].get("n_epochs", 4),
-        gamma=cfg["model"].get("gamma", 0.99),
-        gae_lambda=cfg["model"].get("gae_lambda", 0.95),
-        clip_range=cfg["model"].get("clip_range", 0.1),
-        ent_coef=cfg["model"].get("ent_coef", 0.01),
-        vf_coef=cfg["model"].get("vf_coef", 0.5),
-        max_grad_norm=cfg["model"].get("max_grad_norm", 0.5),
-        tensorboard_log=cfg["logging"].get("tensorboard_log"),
-        verbose=cfg["logging"].get("verbose", 1),
-        device=device,
-        policy_kwargs=policy_kwargs,
-    )
+    policy_name = cfg["model"].get("policy", "CnnPolicy")
+    if isinstance(policy_name, str) and "." in policy_name:
+        module_name, attr_name = policy_name.rsplit(".", 1)
+        policy_class = getattr(importlib.import_module(module_name), attr_name)
+    else:
+        policy_class = policy_name
+
+    if algo == "ppo":
+        model = PPO(
+            policy_class,
+            train_env,
+            learning_rate=cfg["model"].get("learning_rate", 2.5e-4),
+            n_steps=cfg["model"].get("n_steps", 128),
+            batch_size=cfg["model"].get("batch_size", 256),
+            n_epochs=cfg["model"].get("n_epochs", 4),
+            gamma=cfg["model"].get("gamma", 0.99),
+            gae_lambda=cfg["model"].get("gae_lambda", 0.95),
+            clip_range=cfg["model"].get("clip_range", 0.1),
+            ent_coef=cfg["model"].get("ent_coef", 0.01),
+            vf_coef=cfg["model"].get("vf_coef", 0.5),
+            max_grad_norm=cfg["model"].get("max_grad_norm", 0.5),
+            tensorboard_log=cfg["logging"].get("tensorboard_log"),
+            verbose=cfg["logging"].get("verbose", 1),
+            device=device,
+            policy_kwargs=policy_kwargs,
+        )
+    elif algo == "dqn":
+        dqn_kwargs = dict(
+            learning_rate=cfg["model"].get("learning_rate", 1e-4),
+            buffer_size=cfg["model"].get("buffer_size", 100_000),
+            learning_starts=cfg["model"].get("learning_starts", 50_000),
+            batch_size=cfg["model"].get("batch_size", 32),
+            tau=cfg["model"].get("tau", 1.0),
+            gamma=cfg["model"].get("gamma", 0.99),
+            train_freq=cfg["model"].get("train_freq", 4),
+            gradient_steps=cfg["model"].get("gradient_steps", 1),
+            target_update_interval=cfg["model"].get("target_update_interval", 10_000),
+            exploration_fraction=cfg["model"].get("exploration_fraction", 0.1),
+            exploration_initial_eps=cfg["model"].get("exploration_initial_eps", 1.0),
+            exploration_final_eps=cfg["model"].get("exploration_final_eps", 0.01),
+            max_grad_norm=cfg["model"].get("max_grad_norm", 10.0),
+            tensorboard_log=cfg["logging"].get("tensorboard_log"),
+            verbose=cfg["logging"].get("verbose", 1),
+            device=device,
+            policy_kwargs=policy_kwargs,
+        )
+
+        prioritized = cfg["model"].get("prioritize_replay", False)
+        if prioritized:
+            dqn_cls = PrioritizedDQN
+            dqn_kwargs.update(
+                prioritized_replay=True,
+                prioritized_replay_alpha=cfg["model"].get("prioritized_replay_alpha", 0.6),
+                prioritized_replay_beta0=cfg["model"].get("prioritized_replay_beta0", 0.4),
+                prioritized_replay_beta_iters=cfg["model"].get("prioritized_replay_beta_iters"),
+                prioritized_replay_eps=cfg["model"].get("prioritized_replay_eps", 1e-6),
+            )
+        else:
+            dqn_cls = DQN
+
+        model = dqn_cls(
+            policy_class,
+            train_env,
+            **dqn_kwargs,
+        )
+    else:
+        raise ValueError(f"Unsupported algorithm specified: {algo}")
 
     callbacks = setup_callbacks(cfg, eval_env)
     model.learn(

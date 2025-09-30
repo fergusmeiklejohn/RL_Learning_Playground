@@ -1,0 +1,60 @@
+# Double DQN with dueling network and prioritized replay for Breakout
+experiment:
+  name: breakout_dqn_dueling
+  seed: 123
+  total_timesteps: 3000000
+  eval_interval: 100000
+  eval_episodes: 5
+  save_interval: 500000
+  rollout_video: true
+  video_length: 2000
+  notes: "Dueling Double-DQN with prioritized replay; Atari-tuned hyperparameters"
+
+environment:
+  id: ALE/Breakout-v5
+  frame_skip: 4
+  frame_stack: 4
+  noop_max: 30
+  terminate_on_life_loss: true
+  render_mode: null
+
+model:
+  algo: dqn
+  policy: src.simple_game.algos.DuelingCnnPolicy
+  n_envs: 1
+  vec_env_class: dummy
+  learning_rate: 0.0001
+  buffer_size: 100000
+  learning_starts: 50000
+  batch_size: 32
+  tau: 1.0
+  gamma: 0.99
+  train_freq: 4
+  gradient_steps: 1
+  target_update_interval: 10000
+  exploration_fraction: 0.1
+  exploration_final_eps: 0.01
+  max_grad_norm: 10.0
+  policy_kwargs:
+    features_extractor_class: src.simple_game.policies.SimpleNatureCNN
+    net_arch: [512]
+  prioritize_replay: true
+  prioritized_replay_alpha: 0.6
+  prioritized_replay_beta0: 0.4
+  prioritized_replay_beta_iters: null
+  prioritized_replay_eps: 0.000001
+
+logging:
+  tensorboard_log: runs/tensorboard
+  checkpoint_dir: runs/checkpoints
+  monitor_dir: runs/monitor
+  video_dir: runs/videos
+  console_interval: 10000
+  verbose: 1
+  save_replay_buffer: true
+  enable_profiler: false
+
+hardware:
+  device: auto
+  num_threads: 4
+  mps_fallback: true

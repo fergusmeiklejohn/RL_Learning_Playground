@@ -3,4 +3,7 @@
 __all__ = [
     "train",
     "policies",
+    "evaluate",
+    "wrappers",
+    "algos",
 ]

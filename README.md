@@ -21,7 +21,8 @@ This project aims to train reinforcement learning agents on classic Atari games 
 5. **Evaluation & iteration**  
    - Capture policy rollouts for qualitative inspection.  
    - Track experiment metadata in `runs/` and standardize experiment naming.  
-   - Iterate on hyperparameters or algorithms (e.g., A2C, DQN) once baseline PPO is stable.
+   - Use the shared evaluation CLI to summarise ≥30-episode metrics (per-life and per-game).  
+   - Iterate on hyperparameters or algorithms (e.g., dueling DQN) once baseline PPO is stable.
 
 ## Directory Layout
 
@@ -51,6 +52,10 @@ This project aims to train reinforcement learning agents on classic Atari games 
    ```bash
    python -m src.simple_game.train --config configs/ppo_breakout.yaml
    ```
+4. **(Optional) Launch the dueling Double-DQN baseline**
+   ```bash
+   python -m src.simple_game.train --config configs/dqn_breakout.yaml
+   ```
 
 See below for details on each component.
 
@@ -75,10 +80,11 @@ See below for details on each component.
 
 ## Training Strategy
 
-- Start with **PPO**: stable on Atari, robust hyperparameter defaults, and supports vectorized environments for throughput.
+- Start with **PPO** (`configs/ppo_breakout.yaml`) to validate the pipeline on Apple Silicon.
+- Add a value-based baseline with our **dueling Double-DQN + prioritized replay** (`configs/dqn_breakout.yaml`) defined in `src/simple_game.algos`.
 - Configure **frame stacking** and **gray-scaling** via Gymnasium wrappers; use SB3 `VecFrameStack` and `VecTransposeImage` as needed.
-- Implement logging via TensorBoard and periodic model checkpointing.  Checkpoints allow resuming training and comparing policies across experiments.
-- Record evaluation episodes using Gymnasium wrappers with `RecordVideo` for qualitative review.
+- Implement logging via TensorBoard and periodic model checkpointing so we can resume or compare policies across experiments.
+- Record evaluation episodes using `VecVideoRecorder` for qualitative review and archive them in `runs/videos/`.
 
 ### Apple Silicon specifics
 
@@ -91,9 +97,30 @@ See below for details on each component.
 - Evaluate impact of different preprocessing (frame skip, clip rewards).  
 - Add hyperparameter sweeps using Optuna or WandB once manual experimentation plateaus.
 
-## Next Steps
+## Evaluation & Diagnostics
 
-- Fill in `configs/` with initial PPO hyperparameters tailored to Breakout.  
-- Flesh out `src/simple_game/train.py` with CLI and training loop.  
-- Add evaluation script to visualize agent behavior.  
-- Document results and insights in `docs/`.
+We share a CLI that evaluates any SB3 checkpoint and optionally wraps the env with additional instrumentation:
+
+```bash
+python -m src.simple_game.evaluate \
+  --config configs/ppo_breakout.yaml \
+  --checkpoint runs/checkpoints/breakout_ppo_baseline_final.zip \
+  --num-games 30 \
+  --seeds 0 1 2 \
+  --deterministic \
+  --events \
+  --output-dir runs/eval_reports/ppo_det
+```
+
+- `--seeds` adds offsets to the config seed so we can report how metrics vary across evaluation seeds.
+- `--deterministic` switches between greedy (deterministic) and sampled (stochastic) action selection. Omit it for stochastic runs.
+- `--events` enables `BreakoutEventWrapper`, which logs FIRE presses, first-hit steps, and streak lengths for each life and aggregates game statistics.
+- `--output-dir` writes `per_life.csv`, `per_game.csv`, and `summary.json` for downstream analysis (e.g., the dashboard notebook).
+
+Run the command twice per experiment (deterministic / stochastic) to compare performance, then open
+`notebooks/breakout_eval_dashboard.ipynb` to visualise serve timing histograms, high-FIRE failures,
+and brick-hit streaks.
+
+The evaluator also prints a concise console summary (mean rewards, variance, zero-reward serve failures, high-FIRE retries) so regressions stand out immediately.
+
+See `docs/evaluation_tooling.md` for a deeper dive into the exported CSV/JSON formats and notebook workflow.
