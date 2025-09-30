@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import torch
 import yaml
 from stable_baselines3 import DQN, PPO
+from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_atari_env
@@ -110,7 +111,7 @@ def setup_callbacks(cfg: Dict[str, Any], eval_env: VecEnv) -> list:
     return callbacks
 
 
-def record_video(cfg: Dict[str, Any], model: PPO) -> None:
+def record_video(cfg: Dict[str, Any], model: BaseAlgorithm) -> None:
     if not cfg["experiment"].get("rollout_video"):
         return
 
@@ -120,8 +121,14 @@ def record_video(cfg: Dict[str, Any], model: PPO) -> None:
     monitor_path = video_dir / "monitor"
     monitor_path.mkdir(parents=True, exist_ok=True)
 
+    from copy import deepcopy
+
+    video_cfg = deepcopy(cfg)
+    video_cfg.setdefault("environment", {})
+    video_cfg["environment"]["render_mode"] = "rgb_array"
+
     video_env = build_env(
-        cfg,
+        video_cfg,
         mode="eval",
         n_envs=1,
         seed_offset=cfg["experiment"].get("video_seed_offset", 2024),
@@ -130,20 +137,34 @@ def record_video(cfg: Dict[str, Any], model: PPO) -> None:
 
     max_steps = cfg["experiment"].get("video_length", 2000)
     prefix = cfg["experiment"].get("video_name", "eval")
-    video_env = VecVideoRecorder(
-        video_env,
-        str(video_dir),
-        record_video_trigger=lambda step: step == 0,
-        video_length=max_steps,
-        name_prefix=prefix,
-    )
+
+    base_env = video_env
+    while hasattr(base_env, "venv"):
+        base_env = base_env.venv
+
+    inner_env = base_env.envs[0]
+    fps = inner_env.metadata.get("render_fps", cfg["experiment"].get("video_fps", 30))
+    inner_env.metadata["render_fps"] = fps
 
     obs = video_env.reset()
-    for _ in range(max_steps):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, dones, _ = video_env.step(action)
-        if dones.any():
-            break
+
+    try:
+        import imageio.v2 as imageio
+    except ImportError as exc:  # pragma: no cover - runtime dependency
+        raise RuntimeError("imageio is required for video recording") from exc
+
+    output_path = video_dir / f"{prefix}-step-0-to-step-{max_steps}.mp4"
+    with imageio.get_writer(output_path, fps=fps, codec="libx264") as writer:
+        frame = inner_env.render()
+        writer.append_data(frame)
+
+        for _ in range(max_steps):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, dones, _ = video_env.step(action)
+            frame = inner_env.render()
+            writer.append_data(frame)
+            if dones.any():
+                break
 
     video_env.close()
 

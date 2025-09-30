@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import csv
 import json
 import statistics
@@ -9,9 +10,10 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-from stable_baselines3 import PPO
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 
+from .algos import PrioritizedDQN
 from .train import build_env, load_config, select_device
 
 
@@ -119,7 +121,23 @@ def evaluate_checkpoint(
         monitor_dir=None,
         event_wrapper=event_wrapper,
     )
-    model = PPO.load(checkpoint_path, device=device)
+    algo = cfg["model"].get("algo", "ppo").lower()
+
+    policy_ref = cfg["model"].get("policy", "CnnPolicy")
+    if isinstance(policy_ref, str) and "." in policy_ref:
+        module_name, attr_name = policy_ref.rsplit(".", 1)
+        policy_class = getattr(importlib.import_module(module_name), attr_name)
+    else:
+        policy_class = policy_ref
+
+    if algo == "ppo":
+        model = PPO.load(checkpoint_path, device=device)
+    elif algo == "dqn":
+        prioritized = cfg["model"].get("prioritize_replay", False)
+        cls = PrioritizedDQN if prioritized else DQN
+        model = cls.load(checkpoint_path, device=device)
+    else:
+        raise ValueError(f"Unsupported algorithm '{algo}' in config")
 
     per_life_rewards: List[float] = []
     per_life_lengths: List[int] = []

@@ -72,6 +72,15 @@
 - Loss steadily decreasing (<0.01) once replay warms up; prioritized sampling focuses on high-TD-error transitions (serve failures currently dominate).
 - No stability issues observed: prioritized buffer integrates cleanly with custom weight updates, and dueling head runs without MPS quirks.
 
+**Final results (2025-10-01)**
+- Training completed 3,000,000 steps (~5h22m). SB3’s terminal eval (5 episodes) reported **31.4 ± 16.7** reward, **1039** mean length.
+- Extended evaluation (30 games × 3 seeds):
+  - Deterministic mean reward **33.8 ± 3.2** (per-life mean **4.7**), with only **16–25 zero-reward lives** per seed (4–6× fewer than PPO) and no instances of ≥3 FIRE presses without scoring.
+  - Stochastic mean reward **35.7 ± 1.5**, demonstrating the policy remains strong under sampling (contrast to PPO, which lost ~2.3 points when stochastic).
+  - Game lengths averaged **~1,020** frames, highlighting longer volleys and improved serve recovery.
+- Serve analysis: majority of lives now score at least once; failure clusters from PPO (instant misses) dropped sharply, confirming prioritized replay + dueling head help the agent stabilise the opening volley.
+- Recorded evaluation video rebuilt via the new `imageio` pipeline (`runs/videos/breakout_dqn_dueling/eval-step-0-to-step-2000.mp4`).
+
 **Next checkpoints**
 1. Let the run finish the full 3M steps (ETA ~4–5h). Keep TensorBoard open to monitor reward/exploration curves.
 2. After completion, run the evaluation CLI with `--events` for both deterministic and stochastic settings to capture per-life/per-game diagnostics. Compare zero-reward serve failures vs PPO baseline.
