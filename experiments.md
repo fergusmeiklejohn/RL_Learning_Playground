@@ -95,10 +95,27 @@
 - **Config Stub**: `configs/objcentric_breakout_<variant>.yaml`
 - **Objective**: Replace raw-pixel observations with entity slots (paddle, ball, bricks) before policy learning to compare against CNN baselines.
 - **Planned Runs**:
-  - Detector-augmented state with symbolic features concatenated to CNN embeddings (starting point, leveraging easy-to-track Breakout entities).
+  - RAM-tap detector variant (read Atari memory for paddle/ball/brick state) feeding structured features into PPO/DQN – first implementation target.
+  - Pixel/color-threshold detector variant to evaluate generalization beyond emulator internals.
   - Slot-attention encoder powering PPO and DQN heads.
 - **Metrics to Capture**: reward vs frames, serve success rate, slot assignment stability, wall-clock overhead.
 - **Open Questions**: Need for auxiliary reconstruction losses? Sensitivity to encoder pretraining.
+
+#### Variant A: RAM-Tap Detector
+- **Tasks**:
+  1. Map required RAM addresses (paddle x, ball x/y, ball velocity, brick grid) and validate against emulator docs.
+  2. Implement `BreakoutRamDetector` utility returning normalized entity features per step.
+  3. Extend training pipeline to concatenate detector features with CNN outputs (or replace observation pipeline) and add config `configs/objcentric_breakout_ram.yaml`.
+  4. Run pilot PPO/DQN experiments; log feature diagnostics (percentage of valid detections, distribution of speeds).
+- **Risks/Notes**: tightly coupled to Atari RAM layout; must guard against Gym version shifts.
+
+#### Variant B: Color-Threshold Detector
+- **Tasks**:
+  1. Prototype image-space tracker (color masks or template matching) to locate paddle/ball/brick columns.
+  2. Benchmark detection reliability under frame flicker; add smoothing if needed.
+  3. Create config `configs/objcentric_breakout_pixel.yaml` mirroring RAM variant with the new detector.
+  4. Compare performance vs RAM detector to isolate robustness vs implementation cost.
+- **Risks/Notes**: sensitive to palette changes; needs CPU budget for per-frame processing.
 
 ### Hierarchical / Options Series (Strategy 2)
 - **Config Stub**: `configs/hiro_breakout_<variant>.yaml`

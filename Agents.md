@@ -46,3 +46,4 @@ These strands will each get dedicated experiments so we can examine how they wor
 - Starting with detector-augmented object-centric encoders because Breakout’s visuals make deterministic paddle/ball/brick tracking straightforward (color thresholds or RAM taps), giving us fast symbolic features.
 - Expectation is that providing explicit entities will highlight the benefits of abstraction before we invest in heavier unsupervised slot-attention training.
 - Outcomes from this variant will act as the baseline for later slot-attention experiments so we can quantify the trade-off between engineered detectors and learned object discovery.
+- Implementation order: (1) RAM-tap detector that reads Atari memory for precise paddle/ball/brick state, (2) pixel-space detector using color thresholding to test robustness without emulator internals.
