@@ -148,6 +148,11 @@ class BreakoutRamDetector(BaseDetector):
 class BreakoutPixelDetector(BaseDetector):
     """Extracts entity features from preprocessed Breakout frames using heuristics."""
 
+    BALL_THRESHOLD = 130.0
+    PADDLE_THRESHOLD = 110.0
+    BALL_MAX_CLUSTER = 10
+    BALL_MAX_Y_FRACTION = 0.9
+
     def __init__(self, num_envs: int, spec: DetectorSpec) -> None:
         super().__init__(num_envs, spec)
         self._feature_dim = len(self.feature_names)
@@ -184,24 +189,22 @@ class BreakoutPixelDetector(BaseDetector):
         height, width = frame.shape
         paddle_region = frame[int(height * 0.65) :, :]
 
-        paddle_mask = paddle_region > 100.0
+        paddle_mask = paddle_region > self.PADDLE_THRESHOLD
         paddle_x = 0.0
         if paddle_mask.any():
             ys, xs = np.where(paddle_mask)
-            paddle_x = (xs.mean() / width)
+            paddle_x = xs.mean() / width
 
-        ball_mask = frame > 130.0
+        ball_mask = frame > self.BALL_THRESHOLD
         ball_x = 0.0
         ball_y = 0.0
         if ball_mask.any():
-            ys, xs = np.where(ball_mask)
-            # remove paddle detections by thresholding y
-            valid = ys < height * 0.9
-            if valid.any():
-                ys = ys[valid]
-                xs = xs[valid]
-            ball_x = xs.mean() / width if len(xs) else 0.0
-            ball_y = ys.mean() / height if len(ys) else 0.0
+            cluster = self._select_ball_cluster(ball_mask)
+            if cluster is not None:
+                ys = cluster[:, 0]
+                xs = cluster[:, 1]
+                ball_x = xs.mean() / width
+                ball_y = ys.mean() / height
 
         values: List[float] = []
         for feature in self.feature_names:
@@ -214,6 +217,41 @@ class BreakoutPixelDetector(BaseDetector):
             else:
                 values.append(0.0)
         return np.asarray(values, dtype=np.float32)
+
+    def _select_ball_cluster(self, mask: np.ndarray) -> Optional[np.ndarray]:
+        coords = np.argwhere(mask)
+        visited = np.zeros(mask.shape, dtype=bool)
+        clusters: List[np.ndarray] = []
+        for y, x in coords:
+            if visited[y, x]:
+                continue
+            stack = [(y, x)]
+            current: List[Tuple[int, int]] = []
+            while stack:
+                cy, cx = stack.pop()
+                if visited[cy, cx] or not mask[cy, cx]:
+                    continue
+                visited[cy, cx] = True
+                current.append((cy, cx))
+                for ny in range(max(0, cy - 1), min(mask.shape[0], cy + 2)):
+                    for nx in range(max(0, cx - 1), min(mask.shape[1], cx + 2)):
+                        if not visited[ny, nx] and mask[ny, nx]:
+                            stack.append((ny, nx))
+            clusters.append(np.array(current, dtype=np.int32))
+
+        if not clusters:
+            return None
+
+        height = mask.shape[0]
+        filtered = [
+            c
+            for c in clusters
+            if len(c) <= self.BALL_MAX_CLUSTER and c[:, 0].max() < height * self.BALL_MAX_Y_FRACTION
+        ]
+        if not filtered:
+            return None
+        filtered.sort(key=lambda c: c[:, 0].mean())
+        return filtered[0]
 
 
 def build_detector(num_envs: int, detector_cfg: Dict[str, object]) -> BaseDetector:
