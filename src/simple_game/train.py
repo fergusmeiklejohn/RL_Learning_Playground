@@ -18,6 +18,7 @@ from stable_baselines3.common.vec_env import VecFrameStack, VecTransposeImage, V
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 from .algos import PrioritizedDQN
+from .detectors import DetectorAugmentedVecEnv, build_detector
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -79,7 +80,14 @@ def build_env(
             env.envs[idx] = BreakoutEventWrapper(env.envs[idx])
 
     env = VecFrameStack(env, n_stack=cfg["environment"].get("frame_stack", 4))
-    return VecTransposeImage(env)
+    env = VecTransposeImage(env)
+
+    detector_cfg = cfg.get("detector")
+    if detector_cfg is not None:
+        detector = build_detector(env.num_envs, detector_cfg)
+        env = DetectorAugmentedVecEnv(env, detector)
+
+    return env
 
 
 def ensure_dirs(cfg: Dict[str, Any]) -> None:

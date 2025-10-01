@@ -3,10 +3,15 @@ from __future__ import annotations
 
 from typing import Tuple
 
+import numpy as np
 import torch as th
+import torch.nn as nn
+
 from gymnasium import spaces
 from stable_baselines3.common.preprocessing import is_image_space
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
+from .algos import DuelingCnnPolicy
 
 
 class SimpleNatureCNN(BaseFeaturesExtractor):
@@ -66,3 +71,58 @@ class SimpleNatureCNN(BaseFeaturesExtractor):
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
         return self.linear(self.cnn(observations.float()))
+
+
+class DetectorCombinedExtractor(BaseFeaturesExtractor):
+    """Feature extractor that merges pixel CNN features with detector vectors."""
+
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        cnn_output_dim: int = 256,
+        detector_hidden_dim: int = 128,
+        detector_output_dim: int = 64,
+    ) -> None:
+        if not isinstance(observation_space, spaces.Dict):
+            raise TypeError("DetectorCombinedExtractor expects a Dict observation space")
+
+        pixel_space = observation_space.spaces.get("pixels")
+        detector_space = observation_space.spaces.get("detector")
+        if not isinstance(pixel_space, spaces.Box) or not isinstance(detector_space, spaces.Box):
+            raise TypeError("DetectorCombinedExtractor requires Box spaces for both pixels and detector features")
+
+        self.pixel_space = pixel_space
+        self.detector_space = detector_space
+
+        self.cnn = SimpleNatureCNN(pixel_space, features_dim=cnn_output_dim)
+        detector_dim = int(np.prod(detector_space.shape))
+        self.detector_net = nn.Sequential(
+            nn.Linear(detector_dim, detector_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(detector_hidden_dim, detector_output_dim),
+            nn.ReLU(),
+        )
+
+        self._features_dim = cnn_output_dim + detector_output_dim
+        super().__init__(observation_space, self._features_dim)
+
+    @property
+    def features_dim(self) -> int:  # type: ignore[override]
+        return self._features_dim
+
+    def forward(self, observations: dict) -> th.Tensor:  # type: ignore[override]
+        pixels = observations["pixels"].float()
+        detector = observations["detector"].float()
+        pixel_features = self.cnn(pixels)
+        detector_flat = detector.view(detector.size(0), -1)
+        detector_features = self.detector_net(detector_flat)
+        return th.cat([pixel_features, detector_features], dim=1)
+
+
+class DetectorAugmentedDuelingCnnPolicy(DuelingCnnPolicy):
+    """Dueling CNN policy tailored for detector-augmented observations."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("features_extractor_class", DetectorCombinedExtractor)
+        kwargs.setdefault("normalize_images", False)
+        super().__init__(*args, **kwargs)

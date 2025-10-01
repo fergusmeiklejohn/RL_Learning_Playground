@@ -6,4 +6,5 @@ __all__ = [
     "evaluate",
     "wrappers",
     "algos",
+    "detectors",
 ]

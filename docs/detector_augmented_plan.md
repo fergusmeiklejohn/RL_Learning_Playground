@@ -8,15 +8,15 @@ Introduce an auxiliary detector that extracts structured Breakout entities (padd
 2. **Pixel/Color-Threshold Detector** — operate solely on rendered frames to evaluate portability beyond Atari RAM introspection.
 
 ## Immediate Tasks
-- [ ] Catalogue RAM offsets for paddle position, ball position/velocity, and brick grid; record sources in `docs/references.md`.
-- [ ] Implement `BreakoutRamDetector` producing normalized feature vectors and basic diagnostics (valid flags, value ranges).
-- [ ] Add integration hook in `src/simple_game/train.py` (or a new wrapper) to concatenate detector features with CNN embeddings.
-- [ ] Design corresponding policy class `DetectorAugmentedDuelingCnnPolicy` with configurable feature fusion (concat vs MLP).
+- [x] Catalogue RAM offsets for paddle position, ball position/velocity, and brick grid; record notes inline for now (`src/simple_game/detectors.py`).
+- [x] Implement `BreakoutRamDetector` producing normalized feature vectors and basic diagnostics (valid flags, value ranges).
+- [x] Add integration hook in `src/simple_game/train.py` (or a new wrapper) to concatenate detector features with CNN embeddings.
+- [x] Design corresponding policy class `DetectorAugmentedDuelingCnnPolicy` with configurable feature fusion (concat vs MLP).
 - [ ] Update evaluation tooling to log detector outputs for debugging (e.g., mismatch counts).
 
 ## Follow-Up Tasks (Pixel Detector)
-- [ ] Prototype color-threshold tracker and benchmark detection accuracy on recorded videos.
-- [ ] Abstract detector interface so policies can swap between RAM and pixel sources without code changes.
+- [x] Prototype color-threshold tracker and benchmark detection accuracy on recorded videos.
+- [x] Abstract detector interface so policies can swap between RAM and pixel sources without code changes.
 - [ ] Compare performance/sample efficiency across detector variants and raw-pixel baselines; log results in `experiments.md`.
 
 ## Open Questions

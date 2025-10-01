@@ -1,14 +1,14 @@
-# Detector-augmented (RAM taps) DQN experiment for Breakout
+# Detector-augmented (pixel thresholding) DQN experiment for Breakout
 experiment:
-  name: breakout_objenc_ram_dqn
-  seed: 321
+  name: breakout_objenc_pixel_dqn
+  seed: 322
   total_timesteps: 3000000
   eval_interval: 100000
   eval_episodes: 5
   save_interval: 500000
   rollout_video: true
   video_length: 2000
-  notes: "WIP: Dueling Double-DQN with RAM-tap detector features concatenated to visual encoder"
+  notes: "WIP: Dueling Double-DQN with pixel-threshold detector features"
 
 environment:
   id: ALE/Breakout-v5
@@ -18,19 +18,15 @@ environment:
   terminate_on_life_loss: true
   render_mode: null
 
-# Detector configuration will be consumed by upcoming wrappers/utilities
-# TODO: implement detector pipeline in src/simple_game/detectors.py
-# and integrate with training build_env logic.
+# Pixel detector operates on stacked frames directly
+# TODO: tune heuristics if paddle/ball extraction proves noisy.
 detector:
-  type: ram_tap
+  type: pixel
   features:
     - paddle_x
     - ball_x
     - ball_y
-    - ball_vx
-    - ball_vy
-    - brick_bitmap
-  normalization: builtin  # TODO: define normalization scheme
+  normalization: builtin
   output_mode: concat
 
 model:
@@ -55,7 +51,7 @@ model:
     features_extractor_kwargs:
       cnn_output_dim: 256
       detector_hidden_dim: 128
-      detector_output_dim: 64
+      detector_output_dim: 32
   prioritize_replay: true
   prioritized_replay_alpha: 0.6
   prioritized_replay_beta0: 0.4
