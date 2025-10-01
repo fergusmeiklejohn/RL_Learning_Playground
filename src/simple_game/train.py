@@ -261,11 +261,16 @@ def main(config_path: Path) -> None:
         raise ValueError(f"Unsupported algorithm specified: {algo}")
 
     callbacks = setup_callbacks(cfg, eval_env)
-    model.learn(
-        total_timesteps=cfg["experiment"]["total_timesteps"],
-        callback=callbacks if callbacks else None,
-        progress_bar=True,
-    )
+    learn_kwargs: Dict[str, Any] = {
+        "total_timesteps": cfg["experiment"]["total_timesteps"],
+        "callback": callbacks if callbacks else None,
+        "progress_bar": True,
+    }
+    log_interval = cfg.get("logging", {}).get("log_interval")
+    if isinstance(log_interval, int) and log_interval > 0:
+        learn_kwargs["log_interval"] = log_interval
+
+    model.learn(**learn_kwargs)
 
     checkpoint_dir = Path(cfg["logging"]["checkpoint_dir"])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

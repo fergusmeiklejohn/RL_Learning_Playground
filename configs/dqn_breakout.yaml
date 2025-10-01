@@ -49,7 +49,7 @@ logging:
   checkpoint_dir: runs/checkpoints
   monitor_dir: runs/monitor
   video_dir: runs/videos
-  console_interval: 10000
+  log_interval: 100
   verbose: 1
   save_replay_buffer: true
   enable_profiler: false
