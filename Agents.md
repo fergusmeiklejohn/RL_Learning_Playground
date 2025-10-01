@@ -41,3 +41,8 @@ We will create and keep updated an experiments.md file to track the training and
 - **Structured observations**: replace or augment pixel input with RAM/state taps or external object trackers to compare how much abstraction reduces sample complexity.
 
 These strands will each get dedicated experiments so we can examine how they work, where they break, and what tooling or theory is needed to push them further.
+
+### Current Focus: Detector-Augmented Object Encoders
+- Starting with detector-augmented object-centric encoders because Breakout’s visuals make deterministic paddle/ball/brick tracking straightforward (color thresholds or RAM taps), giving us fast symbolic features.
+- Expectation is that providing explicit entities will highlight the benefits of abstraction before we invest in heavier unsupervised slot-attention training.
+- Outcomes from this variant will act as the baseline for later slot-attention experiments so we can quantify the trade-off between engineered detectors and learned object discovery.

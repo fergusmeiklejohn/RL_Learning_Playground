@@ -86,3 +86,44 @@
 2. After completion, run the evaluation CLI with `--events` for both deterministic and stochastic settings to capture per-life/per-game diagnostics. Compare zero-reward serve failures vs PPO baseline.
 3. Update this log with final metrics (30-game mean reward, per-life stats, exploration schedule behaviour) and note whether prioritized replay mitigated the immediate-serve-drop issue.
 4. Depending on results, explore Rainbow-style additions (noisy nets, n-step returns) or adjust buffer size / exploration schedule for faster ramp-up.
+
+---
+
+## Upcoming Structured-Agent Experiment Templates
+
+### Object-Centric Encoder Series (Strategy 1)
+- **Config Stub**: `configs/objcentric_breakout_<variant>.yaml`
+- **Objective**: Replace raw-pixel observations with entity slots (paddle, ball, bricks) before policy learning to compare against CNN baselines.
+- **Planned Runs**:
+  - Detector-augmented state with symbolic features concatenated to CNN embeddings (starting point, leveraging easy-to-track Breakout entities).
+  - Slot-attention encoder powering PPO and DQN heads.
+- **Metrics to Capture**: reward vs frames, serve success rate, slot assignment stability, wall-clock overhead.
+- **Open Questions**: Need for auxiliary reconstruction losses? Sensitivity to encoder pretraining.
+
+### Hierarchical / Options Series (Strategy 2)
+- **Config Stub**: `configs/hiro_breakout_<variant>.yaml`
+- **Objective**: Introduce multi-level controllers (HIRO, Option-Critic) to handle long-horizon planning such as serve recovery and tunnel creation.
+- **Planned Runs**: Baseline hierarchical agent, option-length ablations, termination-condition sweeps.
+- **Metrics to Capture**: option usage histograms, transitions during serve vs rally, reward progression.
+- **Open Questions**: How to shape sub-policy rewards? What option horizon matches Breakout pacing?
+
+### Model-Based Planning Series (Strategy 3)
+- **Config Stub**: `configs/worldmodel_breakout_<variant>.yaml`
+- **Objective**: Train world-model agents (Dreamer-like or lightweight MuZero) to plan in latent space instead of pure model-free updates.
+- **Planned Runs**: reconstruction-only world model, planning-enabled agent, imagination-horizon ablations.
+- **Metrics to Capture**: planning depth vs reward, prediction error on held-out rollouts, reward-model calibration.
+- **Open Questions**: Compute budget on M3 Max? Do learned dynamics transfer across seeds?
+
+### Imitation / Curriculum Series (Strategy 4)
+- **Config Stub**: `configs/imitation_breakout_<variant>.yaml`
+- **Objective**: Bootstrap agents via demonstrations or staged curricula to reduce time-to-first-win.
+- **Planned Runs**: behavior cloning + RL fine-tuning, DAGGER-style aggregation, staged difficulty curriculum.
+- **Metrics to Capture**: sample efficiency, dependence on demo quality, curriculum stage completion time, policy divergence.
+- **Open Questions**: How many demos are required? Does curriculum transfer hold when difficulty scales up?
+
+### Structured Observation Series (Strategy 5)
+- **Config Stub**: `configs/structuredobs_breakout_<variant>.yaml`
+- **Objective**: Replace or augment pixel input with RAM snapshots or external object trackers to test abstraction effects.
+- **Planned Runs**: RAM-only agent, hybrid pixel+RAM inputs, vectorized object statistics (ball angle/speed, paddle position).
+- **Metrics to Capture**: reward vs frame curves, overfitting risks to RAM quirks, preprocessing overhead.
+- **Open Questions**: Stability of RAM features across Gym releases? How to normalize hybrid inputs effectively?
