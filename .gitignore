@@ -4,3 +4,4 @@ __pycache__/
 runs/
 *.mp4
 *.zip
+.DS_Store

@@ -1,6 +1,6 @@
 # Simple Atari RL Playground
 
-This project aims to train reinforcement learning agents on classic Atari games using [Gymnasium](https://gymnasium.farama.org/) environments and [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) on an Apple Silicon (M3 Max) Mac running macOS. The goal is to keep the workflow transparent by documenting decisions, trade-offs, and alternatives.
+This project aims to learn the basics of RL by training different reinforcement learning agents on classic Atari games using [Gymnasium](https://gymnasium.farama.org/) environments and [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) on an Apple Silicon (M3 Max) Mac running macOS. The goal is to keep the workflow transparent by documenting decisions, trade-offs, and alternatives.
 
 ## High-Level Plan
 

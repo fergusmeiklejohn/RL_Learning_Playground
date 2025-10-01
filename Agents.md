@@ -27,3 +27,17 @@ We will create and keep updated an experiments.md file to track the training and
 - AutoROM expects the ROM directory to exist (`~/.gymnasium/atari_roms`); the setup script already handles this.
 - If new dependencies are needed mid-session, prefer `conda env update ... --prune` rather than deleting the env.
 - The repo now exposes `simple_game.policies` via `__all__`, so `policy_kwargs` can reference `src.simple_game.policies.SimpleNatureCNN` safely.
+
+## Progress To Date
+- Completed baseline PPO run (`configs/ppo_breakout.yaml`) at 2M timesteps. Result: modest survival improvements but the agent fails to score consistently because PPO dropped replayed signal from sparse rewards.
+- Completed dueling Double-DQN run (`configs/dqn_breakout.yaml`) at 3M timesteps with prioritized replay. Result: longer rallies and higher mean rewards than PPO, yet still no reliable game wins at this training budget.
+- Key takeaway: off-policy replay plus dueling advantages accelerate learning on sparse Breakout rewards, but data requirements remain high when working from raw pixels and primitive actions.
+
+## Upcoming Exploration: Injecting Structure
+- **Object-centric encoders**: build or integrate feature extractors that detect distinct entities (paddle, ball, bricks) before policy learning to provide symbolic inputs.
+- **Hierarchical / options-based control**: learn mid-level skills (e.g., tracking the ball, setting up tunnels) and a controller that chooses among them to shorten credit assignment chains.
+- **Model-based planning**: experiment with world-model agents (e.g., MuZero-style or Dreamer variants) that learn dynamics and plan or imagine trajectories instead of relying purely on Monte Carlo rollouts.
+- **Imitation and curricula**: seed policies from demonstrations or staged tasks to expose higher-level strategies earlier than epsilon-greedy exploration can discover alone.
+- **Structured observations**: replace or augment pixel input with RAM/state taps or external object trackers to compare how much abstraction reduces sample complexity.
+
+These strands will each get dedicated experiments so we can examine how they work, where they break, and what tooling or theory is needed to push them further.
