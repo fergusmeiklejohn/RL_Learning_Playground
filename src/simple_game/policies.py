@@ -94,6 +94,9 @@ class DetectorCombinedExtractor(BaseFeaturesExtractor):
         self.pixel_space = pixel_space
         self.detector_space = detector_space
 
+        features_dim = cnn_output_dim + detector_output_dim
+        super().__init__(observation_space, features_dim)
+
         self.cnn = SimpleNatureCNN(pixel_space, features_dim=cnn_output_dim)
         detector_dim = int(np.prod(detector_space.shape))
         self.detector_net = nn.Sequential(
@@ -102,13 +105,6 @@ class DetectorCombinedExtractor(BaseFeaturesExtractor):
             nn.Linear(detector_hidden_dim, detector_output_dim),
             nn.ReLU(),
         )
-
-        self._features_dim = cnn_output_dim + detector_output_dim
-        super().__init__(observation_space, self._features_dim)
-
-    @property
-    def features_dim(self) -> int:  # type: ignore[override]
-        return self._features_dim
 
     def forward(self, observations: dict) -> th.Tensor:  # type: ignore[override]
         pixels = observations["pixels"].float()

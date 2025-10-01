@@ -13,7 +13,11 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, create_
 from stable_baselines3.common.type_aliases import Schedule
 from gymnasium import spaces
 
-from .prioritized_buffer import PrioritizedReplayBuffer, PrioritizedReplayBufferSamples
+from .prioritized_buffer import (
+    PrioritizedDictReplayBuffer,
+    PrioritizedReplayBuffer,
+    PrioritizedReplayBufferSamples,
+)
 
 
 class DuelingQNetwork(QNetwork):
@@ -79,6 +83,14 @@ class PrioritizedDQN(DQN):
         self.prioritized_eps = prioritized_replay_eps
 
         if self.use_prioritized:
+            env = None
+            if len(args) > 1:
+                env = args[1]
+            elif "env" in kwargs:
+                env = kwargs["env"]
+            obs_space = None
+            if env is not None:
+                obs_space = env.observation_space
             replay_buffer_kwargs: Dict[str, Any] = kwargs.pop("replay_buffer_kwargs", {}) or {}
             replay_buffer_kwargs.update(
                 {
@@ -88,7 +100,10 @@ class PrioritizedDQN(DQN):
                     "eps": prioritized_replay_eps,
                 }
             )
-            kwargs.setdefault("replay_buffer_class", PrioritizedReplayBuffer)
+            if obs_space is not None and isinstance(obs_space, spaces.Dict):
+                kwargs.setdefault("replay_buffer_class", PrioritizedDictReplayBuffer)
+            else:
+                kwargs.setdefault("replay_buffer_class", PrioritizedReplayBuffer)
             kwargs.setdefault("replay_buffer_kwargs", replay_buffer_kwargs)
 
         super().__init__(*args, **kwargs)

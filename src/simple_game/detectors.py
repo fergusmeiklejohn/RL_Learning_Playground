@@ -303,6 +303,13 @@ class DetectorAugmentedVecEnv(VecEnvWrapper):
     def step_wait(self) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, List[dict]]:  # type: ignore[override]
         obs, rewards, dones, infos = self.venv.step_wait()
         features = self.detector.extract(obs, self._env_refs())
+        for idx, info in enumerate(infos):
+            terminal_obs = info.get("terminal_observation")
+            if terminal_obs is not None:
+                info["terminal_observation"] = {
+                    self.key_pixels: terminal_obs,
+                    self.key_features: np.zeros(self.detector.feature_dim, dtype=np.float32),
+                }
         for idx, done in enumerate(dones):
             if done:
                 self.detector.reset([idx])
