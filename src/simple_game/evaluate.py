@@ -8,8 +8,9 @@ import json
 import statistics
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import torch
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 
@@ -86,6 +87,7 @@ class EvaluationResult:
     per_life_records: List[LifeRecord]
     per_game_records: List[GameRecord]
     failure_stats: Optional[dict] = None
+    q_value_stats: Optional[Dict[str, Stats]] = None
 
 
 def summarize(values: Sequence[float]) -> Stats:
@@ -110,6 +112,7 @@ def evaluate_checkpoint(
     seed: int,
     device: str,
     event_wrapper: bool,
+    collect_q_stats: bool,
 ) -> EvaluationResult:
     """Run evaluation collecting both per-life and per-game statistics."""
 
@@ -146,6 +149,29 @@ def evaluate_checkpoint(
     per_life_records: List[LifeRecord] = []
     per_game_records: List[GameRecord] = []
 
+    q_max_values: List[float] = []
+    q_selected_values: List[float] = []
+    q_gap_values: List[float] = []
+
+    def record_q_stats(observation: dict, action_index: int) -> None:
+        if not collect_q_stats:
+            return
+        if algo != "dqn":
+            return
+        policy = model.policy
+        with torch.no_grad():
+            obs_tensor, _ = policy.obs_to_tensor(observation)
+            q_values = policy.q_net(obs_tensor)
+            # observation batch is size 1 when using DummyVecEnv
+            q_vec = q_values[0].cpu().numpy()
+        selected_q = float(q_vec[action_index])
+        sorted_q = sorted(q_vec, reverse=True)
+        max_q = float(sorted_q[0])
+        gap = float(sorted_q[0] - sorted_q[1]) if len(sorted_q) > 1 else 0.0
+        q_selected_values.append(selected_q)
+        q_max_values.append(max_q)
+        q_gap_values.append(gap)
+
     obs = env.reset()
 
     life_reward = 0.0
@@ -181,13 +207,15 @@ def evaluate_checkpoint(
     games_collected = 0
     while games_collected < num_games:
         actions, _ = model.predict(obs, deterministic=deterministic)
+        action_val = extract_action_val(actions[0] if isinstance(actions, (list, tuple)) else actions)
+
+        record_q_stats(obs, action_val)
+
         obs, rewards, dones, infos = env.step(actions)
 
         reward = float(rewards[0])
         life_reward += reward
         life_length += 1
-
-        action_val = extract_action_val(actions[0] if isinstance(actions, (list, tuple)) else actions)
         if action_val == 1:
             life_fire_presses += 1
             if life_first_fire_step is None:
@@ -338,6 +366,14 @@ def evaluate_checkpoint(
 
     failure_stats = analyze_failures(per_life_records)
 
+    q_value_stats: Optional[Dict[str, Stats]] = None
+    if collect_q_stats and q_selected_values:
+        q_value_stats = {
+            "selected": summarize(q_selected_values),
+            "max": summarize(q_max_values),
+            "gap": summarize(q_gap_values),
+        }
+
     return EvaluationResult(
         seed_offset=seed_offset,
         deterministic=deterministic,
@@ -351,6 +387,7 @@ def evaluate_checkpoint(
         per_life_records=per_life_records,
         per_game_records=per_game_records,
         failure_stats=failure_stats,
+        q_value_stats=q_value_stats,
     )
 
 
@@ -447,6 +484,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable Breakout event wrapper for detailed paddle/ball diagnostics.",
     )
+    parser.add_argument(
+        "--collect-q-stats",
+        action="store_true",
+        help="Record per-step Q-value summaries (mean/max/gap).",
+    )
     return parser.parse_args()
 
 
@@ -472,6 +514,7 @@ def main() -> None:
             seed=actual_seed,
             device=device,
             event_wrapper=args.events,
+            collect_q_stats=args.collect_q_stats,
         )
         results.append(result)
 
@@ -502,6 +545,16 @@ def main() -> None:
                     "    Max FIRE with zero reward: {fire_presses}"
                     " (game {game_index}, life {life_index})".format(**exemplar)
                 )
+        if result.q_value_stats:
+            selected = result.q_value_stats["selected"]
+            gap = result.q_value_stats["gap"]
+            print(
+                "  Q-selected mean={:.3f}±{:.3f}; gap mean={:.3f}".format(
+                    selected.mean,
+                    selected.stdev,
+                    gap.mean,
+                )
+            )
         print()
 
     if len(results) > 1:
@@ -593,6 +646,11 @@ def write_exports(output_dir: Path, args: argparse.Namespace, cfg: dict, results
                 "sb3_rewards": result.sb3_rewards.to_dict(),
                 "sb3_lengths": result.sb3_lengths.to_dict(),
                 "failure_stats": result.failure_stats,
+                "q_value_stats": {
+                    key: val.to_dict() for key, val in (result.q_value_stats or {}).items()
+                }
+                if result.q_value_stats
+                else None,
             }
         )
 

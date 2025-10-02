@@ -254,8 +254,52 @@ class BreakoutPixelDetector(BaseDetector):
         return filtered[0]
 
 
+class HybridDetector(BaseDetector):
+    """Combine multiple detectors by concatenating their feature vectors."""
+
+    def __init__(self, detectors: Sequence[BaseDetector]) -> None:
+        if not detectors:
+            raise ValueError("HybridDetector requires at least one component detector")
+
+        num_envs = detectors[0].num_envs
+        for detector in detectors:
+            if detector.num_envs != num_envs:
+                raise ValueError("All component detectors must share the same num_envs")
+
+        feature_labels = [f"component_{idx}" for idx in range(len(detectors))]
+        spec = DetectorSpec(features=feature_labels, normalization="builtin", output_mode="concat")
+        super().__init__(num_envs=num_envs, spec=spec)
+        self.detectors = list(detectors)
+        self._feature_dim = int(sum(detector.feature_dim for detector in self.detectors))
+
+    @property
+    def feature_dim(self) -> int:
+        return self._feature_dim
+
+    def observation_space(self) -> spaces.Box:
+        return spaces.Box(low=-np.inf, high=np.inf, shape=(self.feature_dim,), dtype=np.float32)
+
+    def reset(self, env_indices: Optional[Iterable[int]] = None) -> None:
+        for detector in self.detectors:
+            detector.reset(env_indices)
+
+    def extract(self, observations: np.ndarray, env_refs: Sequence[object]) -> np.ndarray:
+        features = [detector.extract(observations, env_refs) for detector in self.detectors]
+        concatenated = np.concatenate(features, axis=1)
+        return concatenated.astype(np.float32, copy=False)
+
+
 def build_detector(num_envs: int, detector_cfg: Dict[str, object]) -> BaseDetector:
     """Factory for detector instances based on config dictionaries."""
+
+    detector_type = detector_cfg.get("type", "ram_tap")
+
+    if detector_type == "hybrid":
+        component_cfgs = detector_cfg.get("components")
+        if not component_cfgs:
+            raise ValueError("Hybrid detector requires a 'components' list")
+        components = [build_detector(num_envs, component_cfg) for component_cfg in component_cfgs]
+        return HybridDetector(components)
 
     spec = DetectorSpec(
         features=detector_cfg.get("features", []),
@@ -263,7 +307,6 @@ def build_detector(num_envs: int, detector_cfg: Dict[str, object]) -> BaseDetect
         output_mode=str(detector_cfg.get("output_mode", "concat")),
     )
 
-    detector_type = detector_cfg.get("type", "ram_tap")
     if detector_type == "ram_tap":
         return BreakoutRamDetector(num_envs=num_envs, spec=spec)
     if detector_type == "pixel":

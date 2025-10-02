@@ -87,6 +87,80 @@
 3. Update this log with final metrics (30-game mean reward, per-life stats, exploration schedule behaviour) and note whether prioritized replay mitigated the immediate-serve-drop issue.
 4. Depending on results, explore Rainbow-style additions (noisy nets, n-step returns) or adjust buffer size / exploration schedule for faster ramp-up.
 
+## 2025-10-02 – Detector-Augmented DQN Evaluation
+
+**Config**: `configs/objcentric_breakout_ram.yaml` (`breakout_objenc_ram_dqn`)
+
+**Objective**: Measure the impact of RAM-tap entity features concatenated to the CNN encoder on Breakout performance relative to the pixel-only dueling Double-DQN baseline.
+
+**Artifacts reviewed**: checkpoints at `runs/checkpoints/breakout_objenc_ram_dqn_*.zip`, TensorBoard run `runs/tensorboard/breakout_objenc_ram_dqn`, evaluation exports under `runs/eval_reports/breakout_objenc_ram_dqn/`.
+
+**Evaluation summary (30 games × 3 seed offsets, event wrapper enabled)**
+- Deterministic (greedy) control: per-game reward **35.46 ± 0.53**, per-life reward **4.998 ± 0.10**, average game length **1,061 ± 195** frames. Zero-reward lives fell to **44 / 450** (≈9.8%) with none triggering the ≥3 FIRE misuse flag.
+- Stochastic control (ε-greedy sampling): per-game reward **33.24 ± 1.12**, per-life reward **4.74 ± 0.09**, average game length **1,018 ± 181** frames. Zero-reward lives held at **41 / 450**, but reward mean trailed the pixel baseline by ~2.4 points.
+- Additional `non-deterministic/` sweep (alternate sampling seed choices) landed at **32.48 ± 2.74** reward, confirming the same pattern: sturdy greedy play, softer exploratory play.
+
+**Comparison vs pixel-only DQN baseline** (`runs/eval_reports/dqn_deterministic`, `runs/eval_reports/dqn_stochastic`)
+- Greedy reward lifted **33.82 → 35.46** (+1.64) while variance shrank (per-game std **16.36 → 12.35**). Zero-reward lives dropped from **63** to **44**, and mean life length stretched **46.4 → 49.5** frames, matching the extended rallies seen in the highlight clip.
+- Stochastic reward slipped **35.67 → 33.24** (−2.43). Despite fewer zero-reward lives (52 → 41) and slightly longer games, the policy under exploration noise can’t consistently match the pixel-only agent’s score—pointing to overly sharp Q-gaps.
+- Q-value logging (`--collect-q-stats`) showed mean argmax gaps of **0.34** (both greedy and stochastic sweeps). These narrow margins explain why small sampling noise destabilises play even though the greedy lanes look strong.
+
+**Qualitative artifacts**
+- 6k-step deterministic rollout: `runs/videos/breakout_objenc_ram_dqn/extended-eval-step-0-to-step-6000.mp4`
+- Longest life clip (seed 10002, game 27): `runs/videos/breakout_objenc_ram_dqn/longest-life-seed10002-game27-life0-manual.mp4`
+
+**Pros**
+- Faster, more reliable serves: zero-reward lives down ~30% and FIRE stats show quick relaunches without panic spamming.
+- Higher greedy ceiling with tighter variance; detector features stabilise paddle placement and brick targeting once volleys begin.
+- RAM-derived entities are cheap to compute and deterministic, giving reproducible trajectories (useful for debugging and curriculum planning).
+
+**Cons / Risks**
+- Stochastic robustness regressed: narrow Q-gaps make ε-greedy exploration two points worse than the pixel baseline despite comparable rally lengths.
+- Heavy reliance on emulator internals (RAM taps) may not transfer to environments without accessible memory maps; brittleness if ALE RAM layout shifts.
+- Detector head likely dominates the CNN extractor; monitoring needed to ensure pixel features still contribute once we add pixel/object hybrids.
+
+**Next steps**
+1. Investigate Q-value calibration (noisy nets, action-value regularisation, or lower detector gain) to close the stochastic gap while keeping serve reliability.
+2. Blend RAM and pixel detectors, or add dropout in the detector MLP, to diversify features and widen Q-gaps.
+3. Extend the eval harness with gap histograms / per-life scatter plots to see where stochastic failures occur (serve vs rally). Use the saved long-life clip as a qualitative baseline when testing adjustments.
+
+---
+
+## 2025-10-03 – Hybrid RAM+Pixel Detector Plan
+
+**Config**: `configs/objcentric_breakout_hybrid.yaml` (`breakout_objenc_hybrid_dqn`)
+
+**Hypothesis**: Concatenating RAM taps (precise but emulator-specific) with pixel-threshold features (noisier but emulator-agnostic) will keep greedy performance high while widening Q-value margins, improving stochastic robustness and highlighting failure modes when the sources disagree.
+
+**Detector design**
+- New `HybridDetector` composes existing `BreakoutRamDetector` and `BreakoutPixelDetector` (see `src/simple_game/detectors.HybridDetector`). It resets both sub-detectors each episode, concatenates their feature vectors every step, and presents a single augmented observation to the policy extractor.
+- RAM component uses paddle/ball velocity plus a 12-bit brick bitmap; pixel component tracks paddle/ball centroids from the most recent frame. Detector MLP output widened to 96 dims to process the richer signal.
+
+**Experiment setup**
+- Train prioritized dueling DQN for 3M steps (`python -m src.simple_game.train --config configs/objcentric_breakout_hybrid.yaml`).
+- Evaluation sweeps: deterministic and stochastic (30 games × seed offsets 0/1/2) plus `--collect-q-stats` to log argmax gaps for comparison against RAM-only and pixel-only baselines.
+- Artifacts to collect: per-life/per-game CSVs, q-stat summaries, long-serve clips (reuse recording helper with target life indices once evaluation data is available).
+
+**What to compare**
+- Greedy vs stochastic reward delta relative to RAM-only run (does blending recover the ~2.4-point loss?).
+- Q-gap histograms vs RAM-only (expect gaps >0.34 if pixel signal injects diversity).
+- Disagreement diagnostics: track lives where RAM predicts ball contact but pixel features disagree (e.g., via correlation plots of paddle_x_ram vs paddle_x_pixel in exported CSVs).
+
+**Success criteria**
+1. Deterministic reward ≥ RAM-only baseline (≥35.4) with equal or lower zero-reward lives.
+2. Stochastic reward within ±0.5 of pixel-only baseline (≈35.7) or visibly improved over RAM-only (≥34.5) without widening variance.
+3. Q-gap mean increases (target ≥0.45) while remaining stable across seeds.
+
+**Risks / watch-outs**
+- Mismatch between RAM and pixel coordinates could confuse the detector MLP (requires monitoring of feature scales; may need normalization hooks if gradients oscillate).
+- Additional detector dimensions might require tweaking `detector_hidden_dim` or adding dropout to prevent overfitting to RAM.
+- If performance regresses, consider gating/attention between components instead of naive concatenation.
+
+**Next actions**
+1. Kick off training run and monitor TensorBoard (detector feature norms, TD error).
+2. Extend evaluation tooling with optional CSV columns capturing RAM vs pixel deltas for offline plotting (if needed post-run).
+3. Update this log with results, highlighting whether hybridization closes the stochastic gap or introduces new failure signatures.
+
 ---
 
 ## Upcoming Structured-Agent Experiment Templates
