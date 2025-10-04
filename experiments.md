@@ -195,6 +195,38 @@
 
 ---
 
+## 2025-10-05 – Slot Attention Encoder Plan
+
+**Config**: `configs/objcentric_breakout_slot.yaml` (`breakout_objenc_slot_dqn`)
+
+**Objective**: Replace hand-engineered detectors with a learned Slot Attention encoder that discovers object slots directly from pixels, testing whether learned object grouping can match RAM-level reliability while widening Q-value gaps.
+
+**Model changes**
+- Added `SlotAttentionExtractor` and `SlotAttentionDuelingCnnPolicy` (`src/simple_game/policies.py`). The encoder uses a lightweight CNN backbone, adds positional embeddings, runs 3 Slot Attention iterations over 6 slots (64-dim each), and flattens slots before the dueling head.
+- Slot Attention module initialises slots via learned Gaussians, applies attention/MLP updates, and outputs per-slot embeddings suitable for value estimation.
+
+**Experiment setup**
+- Train prioritized dueling DQN for 3M steps with the new policy (`python -m src.simple_game.train --config configs/objcentric_breakout_slot.yaml`).
+- Track: training reward curve, slot feature norms, attention entropy (add custom logging if necessary), and compare deterministic/stochastic evaluations (30 games × seeds 0/1/2 + `--collect-q-stats`).
+- Save evaluation artifacts under `runs/eval_reports/breakout_objenc_slot/` and capture representative videos once stabilized.
+
+**What to compare**
+- Serve reliability vs hybrid detector (zero-reward lives, life length).
+- Stochastic reward vs pixel baseline—do learned slots widen Q-gaps (>0.34) and recover exploratory robustness?
+- Slot diversity: inspect attention weights or per-slot activation variance to ensure multiple entities are captured.
+
+**Risks / monitoring**
+- Slot Attention adds optimisation complexity; monitor for slot collapse (all slots identical) or exploding gradients (enable gradient clipping if needed).
+- Additional compute may reduce FPS; profile on M3 Max/MPS and adjust slot count or CNN width if training stalls.
+- If convergence lags, consider pretraining encoder with reconstruction loss or freezing slot module for initial steps.
+
+**Next actions**
+1. Kick off the slot-attention training run and watch TensorBoard for slot feature stability.
+2. Extend evaluation tooling to optionally log attention entropy per step (TODO if collapse suspected).
+3. Document results alongside hybrid/RAM/pixel baselines once evaluation completes.
+
+---
+
 ## Upcoming Structured-Agent Experiment Templates
 
 ### Object-Centric Encoder Series (Strategy 1)
