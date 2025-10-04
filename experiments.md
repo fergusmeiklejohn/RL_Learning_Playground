@@ -163,6 +163,38 @@
 
 ---
 
+## 2025-10-04 – Hybrid RAM+Pixel Detector Results
+
+**Artifacts reviewed**: `runs/eval_reports/breakout_objenc_hybrid/{deterministic,stochastic}/`, `runs/videos/breakout_objenc_ram_dqn/longest-life-seed10002-game27-life0-manual.mp4`
+
+**Key metrics**
+- Deterministic reward **35.31 ± 1.64** (RAM-only: 35.46 ± 0.53; pixel-only: 33.82 ± 3.22). Per-life reward 4.99 vs 4.74 (pixel) and 4.88 (RAM).
+- Zero-reward lives: **26 / 450** (≈5.8%). RAM-only had 44 (9.8%), pixel-only 63 (14%). Serve reliability improved markedly.
+- Mean life length: 48.4 frames (RAM 49.5, pixel 46.4). Qualitatively matches long-serve clip—volley duration stays high.
+- Stochastic reward **33.23 ± 3.44** (RAM-only: 33.24 ± 1.12; pixel-only: 35.67 ± 1.54). Hybrid mirrors RAM behaviour under exploration, trailing pixel baseline by ~2.4 points.
+- Q-value argmax gap (from `--collect-q-stats`): **0.33–0.34** across seeds, identical to RAM-only run. Pixel features act as a regulariser rather than widening action preferences.
+
+**Pros**
+- Serve consistency: zero-reward lives halved vs RAM-only, threefold better than pixel-only.
+- Greedy play retains high score with tighter per-seed variance; hybrid observably steadies early rallies.
+- RAM+pixel fusion keeps per-life length nearly unchanged, indicating the richer input doesn’t destabilise control.
+
+**Cons / trade-offs**
+- Stochastic reward remains low; the hybrid fails to recover the pixel-only agent’s exploratory edge.
+- Q-gaps stay narrow (~0.34), so ε-greedy sampling still flips to near-tie actions that underperform.
+- Added dependence on emulator RAM remains; pixel stream doesn’t yet compensate when RAM is noisy.
+
+**Interpretation**
+- Hybrid features emphasise safety (almost every serve scores) but don’t diversify policy decisions. Action-value regularisation or stream reweighting likely required to widen Q-gaps if exploration matters.
+- Choice of agent depends on priorities: pixel-only for stochastic robustness, RAM-only for higher greedy reward, hybrid for serve reliability.
+
+**Next steps**
+1. Normalise/scale detector streams or add dropout/noisy nets to widen Q-gaps while preserving serve gains.
+2. Log RAM vs pixel paddle/ball deltas in exported CSVs to diagnose disagreement patterns; consider attention/gating if conflicts emerge.
+3. Repeat evaluations post-adjustments, updating this log with Q-gap histograms and stochastic reward deltas.
+
+---
+
 ## Upcoming Structured-Agent Experiment Templates
 
 ### Object-Centric Encoder Series (Strategy 1)
