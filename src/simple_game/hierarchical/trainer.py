@@ -12,6 +12,11 @@ import numpy as np
 import torch as th
 import torch.nn.functional as F
 
+try:  # pragma: no cover - optional dependency for richer progress display
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - fallback when tqdm missing
+    tqdm = None
+
 from ..train import build_env, ensure_dirs
 from .config import HierarchicalConfig
 from .controller import HierarchicalController
@@ -172,8 +177,8 @@ class HierarchicalTrainer:
     def train(self) -> TrainerArtifacts:
         ensure_dirs(self.base_cfg)
         env = build_env(self.base_cfg, mode="train", n_envs=1, event_wrapper=True)
-        observation_space = env.single_observation_space
-        action_space = env.single_action_space
+        observation_space = env.observation_space
+        action_space = env.action_space
         controller = self.build_controller(observation_space, action_space)
 
         skill_agents: Dict[str, DQNAgent] = {}
@@ -222,6 +227,10 @@ class HierarchicalTrainer:
         log_interval = self.base_cfg.get("logging", {}).get("log_interval", 1000)
         next_eval = self.cfg.eval_interval
         next_checkpoint = self.cfg.checkpoint_interval
+
+        progress = None
+        if self.base_cfg.get("experiment", {}).get("progress_bar", True) and tqdm is not None:
+            progress = tqdm(total=total_steps, desc="Hierarchical training", dynamic_ncols=True)
 
         for step in range(1, total_steps + 1):
             if current_skill is None:
@@ -294,17 +303,42 @@ class HierarchicalTrainer:
                 option_steps = 0
                 option_start_obs = obs.copy()
 
+            if progress is not None:
+                progress.update(1)
+
             if log_interval and step % log_interval == 0:
                 avg_reward = np.mean(episode_rewards[-10:]) if episode_rewards else float("nan")
                 avg_len = np.mean(episode_lengths[-10:]) if episode_lengths else float("nan")
                 avg_skill_loss = np.mean(skill_losses[-log_interval:]) if skill_losses else float("nan")
                 avg_manager_loss = np.mean(manager_losses[-log_interval:]) if manager_losses else float("nan")
-                print(
-                    f"[hier] step={step} avg_reward={avg_reward:.2f} avg_len={avg_len:.1f}"
-                    f" manager_eps={self._epsilon(self.cfg.manager_epsilon_start, self.cfg.manager_epsilon_end, self.cfg.manager_epsilon_decay_steps, step):.3f}"
-                    f" skill_eps={self._epsilon(self.cfg.epsilon_start, self.cfg.epsilon_end, self.cfg.epsilon_decay_steps, step):.3f}"
-                    f" skill_loss={avg_skill_loss:.4f} manager_loss={avg_manager_loss:.4f}"
-                )
+                if progress is not None:
+                    progress.set_postfix(
+                        {
+                            "reward": "%.2f" % avg_reward,
+                            "len": "%.1f" % avg_len,
+                            "mgr_eps": "%.3f"
+                            % self._epsilon(
+                                self.cfg.manager_epsilon_start,
+                                self.cfg.manager_epsilon_end,
+                                self.cfg.manager_epsilon_decay_steps,
+                                step,
+                            ),
+                            "sk_eps": "%.3f"
+                            % self._epsilon(
+                                self.cfg.epsilon_start,
+                                self.cfg.epsilon_end,
+                                self.cfg.epsilon_decay_steps,
+                                step,
+                            ),
+                        }
+                    )
+                else:
+                    print(
+                        f"[hier] step={step} avg_reward={avg_reward:.2f} avg_len={avg_len:.1f}"
+                        f" manager_eps={self._epsilon(self.cfg.manager_epsilon_start, self.cfg.manager_epsilon_end, self.cfg.manager_epsilon_decay_steps, step):.3f}"
+                        f" skill_eps={self._epsilon(self.cfg.epsilon_start, self.cfg.epsilon_end, self.cfg.epsilon_decay_steps, step):.3f}"
+                        f" skill_loss={avg_skill_loss:.4f} manager_loss={avg_manager_loss:.4f}"
+                    )
 
             if self.cfg.eval_interval and step >= next_eval:
                 self._evaluate(env, manager_agent, skill_agents)
@@ -315,6 +349,8 @@ class HierarchicalTrainer:
                 next_checkpoint += self.cfg.checkpoint_interval
 
         checkpoint_dir, manager_path, skill_paths = self._save_checkpoints(manager_agent, skill_agents)
+        if progress is not None:
+            progress.close()
         env.close()
         return TrainerArtifacts(
             checkpoint_dir=str(checkpoint_dir),

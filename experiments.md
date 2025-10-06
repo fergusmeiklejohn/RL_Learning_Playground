@@ -373,3 +373,27 @@
 1. Implement skill-specific intrinsic rewards/triggers (e.g., detect tunnel events) to replace the current "reward > 0" success heuristic.
 2. Add evaluation hooks mirroring PPO/DQN tooling (per-life CSVs, option usage stats).
 3. Profile learning stability and calibrate epsilon/target update schedules before launching the first hierarchical Breakout run.
+
+## 2025-10-06 – Hierarchical Trainer Progress Bar
+
+Added a `tqdm`-backed progress bar to hierarchical training (enabled via `experiment.progress_bar`).
+The bar tracks step completion alongside rolling reward/length and epsilon stats, giving the same
+at-a-glance ETA feedback as our SB3 runs.
+
+## 2025-10-07 – Hierarchical DQN Run Results
+
+**Artifacts reviewed**: `runs/checkpoints/breakout_hier_options/manager.pt`, `skill_*.pt`, monitor logs (`runs/monitor/*.monitor.csv`). Direct deterministic evaluation via standalone script currently segfaults inside ALE when reinitialising the Breakout env outside the training harness, so the summary below relies on the monitor traces from the completed 3M-step run (final 10.2k games) plus the tail window (last 100 games) as a proxy for plateau performance.
+
+**Training statistics**
+- Aggregate across the run (10,180 episodes): mean reward **21.48 ± 8.70**, mean episode length **792.8 ± 406** steps; zero-reward games are rare (**0.05%**).
+- Final 100 training games: reward **22.81 ± 8.24**, episode length **820.7 ± 182.7** steps — the manager keeps the ball alive longer but still falls well short of template slot-attention agents on scoring.
+- Progress-bar eval snapshots during training hovered around reward ≈1–2, confirming that the greedy manager/skill stack has not yet learned stable serve or tunnel behaviours despite long training.
+
+**Qualitative takeaways**
+- Option selection remains dominated by `track_ball`; the sparse bonuses tied to raw reward do not inject enough signal for `serve_setup`/`tunnel_push` to value long-horizon planning.
+- Replay buffers were shared only implicitly through extrinsic reward, so each skill mostly learned local reflexes. The manager, lacking intrinsic feedback about subgoal completion, rarely deviates from the safety skill.
+
+**Next steps**
+1. Add skill-specific intrinsic rewards/triggers (e.g., reward `serve_setup` for firing launch successfully, `tunnel_push` for brick hits on the target columns) so the manager receives shaped returns per option.
+2. Reduce epsilon schedules for matured skills while keeping manager exploration higher to encourage option diversity.
+3. Once intrinsic signals are in place, re-run evaluation (the existing script can be re-used once we resolve the ALE re-init segfault, likely by integrating evaluation directly into `HierarchicalTrainer`).

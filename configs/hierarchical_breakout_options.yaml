@@ -5,6 +5,7 @@ experiment:
   total_timesteps: 3000000
   eval_interval: 100000
   save_interval: 250000
+  progress_bar: true
   notes: "Two-level controller: manager selects skills, low-level skills drive paddle/ball behaviors"
 
 environment:
@@ -15,6 +16,8 @@ environment:
 
 model:
   algo: hierarchical
+  n_envs: 1
+  vec_env_class: dummy
 
 hierarchical:
   manager:
