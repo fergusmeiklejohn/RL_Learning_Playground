@@ -64,6 +64,12 @@ class DuelingCnnPolicy(CnnPolicy):
         net_args = self._update_features_extractor(self.net_args, features_extractor=None)
         return DuelingQNetwork(**net_args).to(self.device)
 
+    def pop_auxiliary_loss(self) -> tuple[th.Tensor | None, Dict[str, float]]:
+        extractor = getattr(self, "features_extractor", None)
+        if extractor is not None and hasattr(extractor, "pop_auxiliary_loss"):
+            return extractor.pop_auxiliary_loss()  # type: ignore[return-value]
+        return None, {}
+
 
 
 class PrioritizedDQN(DQN):
@@ -113,6 +119,9 @@ class PrioritizedDQN(DQN):
         self._update_learning_rate(self.policy.optimizer)
 
         losses = []
+        td_losses = []
+        aux_loss_values = []
+        aux_log_accumulator: Dict[str, list[float]] = {}
         for _ in range(gradient_steps):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
 
@@ -134,13 +143,25 @@ class PrioritizedDQN(DQN):
 
             elementwise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction="none")
             if weights is not None:
-                loss = (elementwise_loss * weights).mean()
+                td_loss = (elementwise_loss * weights).mean()
             else:
-                loss = elementwise_loss.mean()
-            losses.append(loss.item())
+                td_loss = elementwise_loss.mean()
+
+            aux_loss, aux_logs = self.policy.pop_auxiliary_loss()
+            if aux_loss is not None:
+                total_loss = td_loss + aux_loss
+                aux_loss_values.append(aux_loss.item())
+            else:
+                total_loss = td_loss
+
+            td_losses.append(td_loss.item())
+            losses.append(total_loss.item())
+
+            for key, value in aux_logs.items():
+                aux_log_accumulator.setdefault(key, []).append(value)
 
             self.policy.optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
             self.policy.optimizer.step()
 
@@ -150,7 +171,15 @@ class PrioritizedDQN(DQN):
 
         self._n_updates += gradient_steps
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("train/loss", np.mean(losses))
+        if losses:
+            self.logger.record("train/loss", float(np.mean(losses)))
+        if td_losses:
+            self.logger.record("train/td_loss", float(np.mean(td_losses)))
+        if aux_loss_values:
+            self.logger.record("train/aux_loss", float(np.mean(aux_loss_values)))
+        for key, values in aux_log_accumulator.items():
+            if values:
+                self.logger.record(f"train/aux/{key}", float(np.mean(values)))
 
 
 __all__ = ["PrioritizedDQN", "DuelingCnnPolicy"]

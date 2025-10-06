@@ -1,0 +1,55 @@
+# Hierarchical Breakout experiment draft using option-based control
+experiment:
+  name: breakout_hier_options
+  seed: 777
+  total_timesteps: 3000000
+  eval_interval: 100000
+  save_interval: 250000
+  notes: "Two-level controller: manager selects skills, low-level skills drive paddle/ball behaviors"
+
+hierarchical:
+  manager:
+    horizon: 32
+    update_interval: 8
+    gamma: 0.99
+    intrinsic_reward_scale: 0.1
+    advantage_target: delta
+    temperature: 0.8
+  skills:
+    - name: track_ball
+      trigger: "ball_in_play"
+      horizon: 16
+      success_reward: 0.5
+      failure_penalty: -0.2
+      termination_on_success: false
+      warmup_steps: 20000
+    - name: serve_setup
+      trigger: "pre_serve"
+      horizon: 12
+      success_reward: 1.0
+      failure_penalty: -0.5
+      termination_on_success: true
+      warmup_steps: 10000
+    - name: tunnel_push
+      trigger: "left_tunnel"
+      horizon: 24
+      success_reward: 1.5
+      failure_penalty: -0.3
+      termination_on_success: true
+      warmup_steps: 30000
+
+hardware:
+  device: auto
+  num_threads: 4
+  mps_fallback: true
+
+logging:
+  tensorboard_log: runs/tensorboard
+  checkpoint_dir: runs/checkpoints
+  monitor_dir: runs/monitor
+  video_dir: runs/videos
+  verbose: 1
+  log_interval: 100
+
+# Note: hierarchical training loop is under construction (see src/simple_game/hierarchical/).
+# Run once HierarchicalTrainer.train is fully implemented.

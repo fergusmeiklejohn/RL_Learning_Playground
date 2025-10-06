@@ -160,7 +160,7 @@ class SlotAttention(nn.Module):
             nn.Linear(mlp_hidden_dim, slot_dim),
         )
 
-    def forward(self, inputs: th.Tensor) -> th.Tensor:
+    def forward(self, inputs: th.Tensor, *, return_attn: bool = False) -> th.Tensor | tuple[th.Tensor, th.Tensor]:
         """Run slot attention on a set of inputs (B, N, D)."""
 
         batch_size, num_inputs, _ = inputs.shape
@@ -174,6 +174,7 @@ class SlotAttention(nn.Module):
         k = self.project_k(inputs)
         v = self.project_v(inputs)
 
+        last_attn: th.Tensor | None = None
         for _ in range(self.iterations):
             slots_prev = slots
             slots_norm = self.norm_slots(slots)
@@ -182,11 +183,17 @@ class SlotAttention(nn.Module):
             attn_logits = th.matmul(k, q.transpose(-1, -2)) * self.scale
             attn = F.softmax(attn_logits, dim=1)
             attn = attn / (attn.sum(dim=1, keepdim=True) + self.eps)
+            last_attn = attn
 
             updates = th.matmul(attn.transpose(1, 2), v)
 
             slots = slots_prev + updates
             slots = slots + self.mlp(self.norm_mlp(slots))
+
+        if return_attn:
+            if last_attn is None:
+                raise RuntimeError("slot attention did not compute attention weights")
+            return slots, last_attn
 
         return slots
 
@@ -201,6 +208,11 @@ class SlotAttentionExtractor(BaseFeaturesExtractor):
         slot_dim: int = 64,
         iterations: int = 3,
         mlp_hidden_dim: int = 128,
+        aux_entropy_weight: float = 0.0,
+        aux_slot_variance_weight: float = 0.0,
+        aux_reconstruction_weight: float = 0.0,
+        aux_reconstruction_downsample: bool = True,
+        log_attention_metrics: bool = False,
     ) -> None:
         if not isinstance(observation_space, spaces.Box):
             raise TypeError("SlotAttentionExtractor expects a Box observation space")
@@ -235,6 +247,37 @@ class SlotAttentionExtractor(BaseFeaturesExtractor):
             mlp_hidden_dim=mlp_hidden_dim,
         )
 
+        self.aux_entropy_weight = float(aux_entropy_weight)
+        self.aux_slot_variance_weight = float(aux_slot_variance_weight)
+        self.aux_reconstruction_weight = float(aux_reconstruction_weight)
+        self.aux_reconstruction_downsample = aux_reconstruction_downsample
+        self.log_attention_metrics = log_attention_metrics
+
+        self._needs_attention = (
+            self.aux_entropy_weight > 0.0
+            or self.aux_slot_variance_weight > 0.0
+            or self.log_attention_metrics
+        )
+
+        self._use_reconstruction = self.aux_reconstruction_weight > 0.0
+
+        if self._use_reconstruction:
+            self.decoder = nn.Sequential(
+                nn.Linear(features_dim, slot_dim * encoded_h * encoded_w),
+                nn.ReLU(),
+                nn.Unflatten(1, (slot_dim, encoded_h, encoded_w)),
+                nn.ConvTranspose2d(slot_dim, 64, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.ReLU(),
+                nn.ConvTranspose2d(32, channels, kernel_size=5, stride=2, padding=2, output_padding=1),
+            )
+        else:
+            self.decoder = None
+
+        self._cached_aux_loss: th.Tensor | None = None
+        self._cached_aux_logs: dict[str, float] = {}
+
     @staticmethod
     def _build_position_grid(height: int, width: int) -> th.Tensor:
         ys = th.linspace(-1.0, 1.0, height)
@@ -252,8 +295,58 @@ class SlotAttentionExtractor(BaseFeaturesExtractor):
         x = th.cat([x, pos], dim=-1)
         x = self.input_proj(x)
 
-        slots = self.slot_attention(x)
-        return slots.reshape(batch_size, -1)
+        slots_output = self.slot_attention(x, return_attn=self._needs_attention)
+        if self._needs_attention:
+            slots, attn = slots_output  # type: ignore[misc]
+        else:
+            slots = slots_output  # type: ignore[assignment]
+            attn = None
+
+        flat_slots = slots.reshape(batch_size, -1)
+
+        self._cached_aux_loss = None
+        self._cached_aux_logs = {}
+
+        if self.training:
+            aux_losses: list[th.Tensor] = []
+
+            if attn is not None and (self.aux_entropy_weight > 0.0 or self.log_attention_metrics):
+                slot_attention = attn.transpose(1, 2)  # (B, num_slots, num_inputs)
+                entropy = -(slot_attention * (slot_attention.clamp_min(1e-8).log())).sum(dim=-1)
+                entropy_mean = entropy.mean()
+                self._cached_aux_logs["slot_attention_entropy"] = float(entropy_mean.detach().cpu())
+                if self.aux_entropy_weight > 0.0:
+                    aux_losses.append(-self.aux_entropy_weight * entropy_mean)
+
+            if self.aux_slot_variance_weight > 0.0 or self.log_attention_metrics:
+                slot_std = slots.std(dim=1).mean()
+                self._cached_aux_logs.setdefault("slot_feature_std", float(slot_std.detach().cpu()))
+                if self.aux_slot_variance_weight > 0.0:
+                    aux_losses.append(-self.aux_slot_variance_weight * slot_std)
+
+            if self._use_reconstruction and self.decoder is not None:
+                recon = self.decoder(flat_slots)
+                target = observations.float()
+                if self.aux_reconstruction_downsample:
+                    target = F.interpolate(target, size=recon.shape[-2:], mode="bilinear", align_corners=False)
+                recon_loss = F.mse_loss(recon, target)
+                self._cached_aux_logs["slot_reconstruction_loss"] = float(recon_loss.detach().cpu())
+                aux_losses.append(self.aux_reconstruction_weight * recon_loss)
+
+            if aux_losses:
+                total_loss = aux_losses[0]
+                for extra in aux_losses[1:]:
+                    total_loss = total_loss + extra
+                self._cached_aux_loss = total_loss
+
+        return flat_slots
+
+    def pop_auxiliary_loss(self) -> tuple[th.Tensor | None, dict[str, float]]:
+        loss = self._cached_aux_loss
+        logs = self._cached_aux_logs
+        self._cached_aux_loss = None
+        self._cached_aux_logs = {}
+        return loss, logs
 
 
 class SlotAttentionDuelingCnnPolicy(DuelingCnnPolicy):

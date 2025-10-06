@@ -42,6 +42,11 @@ model:
       slot_dim: 64
       iterations: 3
       mlp_hidden_dim: 128
+      aux_entropy_weight: 0.02
+      aux_slot_variance_weight: 0.001
+      aux_reconstruction_weight: 0.05
+      aux_reconstruction_downsample: true
+      log_attention_metrics: true
   prioritize_replay: true
   prioritized_replay_alpha: 0.6
   prioritized_replay_beta0: 0.4

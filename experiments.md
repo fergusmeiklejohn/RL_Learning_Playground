@@ -282,3 +282,85 @@
 - **Planned Runs**: RAM-only agent, hybrid pixel+RAM inputs, vectorized object statistics (ball angle/speed, paddle position).
 - **Metrics to Capture**: reward vs frame curves, overfitting risks to RAM quirks, preprocessing overhead.
 - **Open Questions**: Stability of RAM features across Gym releases? How to normalize hybrid inputs effectively?
+
+## 2025-10-06 – Slot Attention Encoder Results
+
+**Artifacts reviewed**: `runs/eval_reports/breakout_objenc_slot/{deterministic,stochastic}/summary.json`, per-life/per-game CSVs, training checkpoints at `runs/checkpoints/breakout_objenc_slot_dqn_final.zip`.
+
+**Key metrics**
+- Deterministic (30 games × seeds 10000/1/2): per-game reward **29.57 ± 2.31**, per-life reward ≈ **4.45**, mean episode length **942–974** frames.
+- Stochastic sweep: per-game reward **31.21 ± 0.65**, per-life reward ≈ **4.56**, lengths ≈ **968** frames.
+- Serve reliability: only **4 / 450** deterministic lives and **6 / 450** stochastic lives ended scoreless (≤1%), best among all agents so far.
+- Q-gap: mean action gap **0.31** (det) / **0.30–0.31** (stoch), essentially unchanged vs RAM or hybrid detectors.
+
+**Comparative highlights**
+- Greedy play regresses **~5.9 points** vs RAM detector (35.46 ± 0.53) and **~5.7** vs hybrid (35.31 ± 1.64), though it still beats PPO baseline (22.83 ± 0.56) on full-game reward.
+- Stochastic reward sits **2.0 points below** hybrid (33.23 ± 3.44) and **4.5 below** the pixel-only dueling DQN (35.67 ± 1.54), indicating slots have not yet widened exploration margins.
+- Serve stability surpasses prior detectors (RAM 44 scoreless lives, hybrid 26, pixel 63), showing slot features capture paddle/ball cues reliably even without RAM taps.
+- Episode lengths trail RAM/hybrid by ≈80–120 frames, suggesting earlier brick clears but shorter rallies once tunnels open.
+
+**Interpretation**
+- Slot attention successfully discovers entities sufficient to eliminate most serve drops, validating the learned-object approach for core control.
+- However, the encoder collapses to similarly narrow Q-gaps (~0.31) as prior runs, so ε-greedy sampling still flips between near-tie actions and fails to recover the pixel agent's exploratory strength.
+- The longer-tail reward distribution (std ≈10) points to unstable brick-clear strategies—likely slot assignments shift mid-rally, reducing high-reward outliers seen with RAM features.
+
+**Next steps**
+1. Instrument slot entropy/variance logging to detect slot collapse and guide regularisation (e.g., KL to encourage diverse slots).
+2. Add auxiliary reconstruction or contrastive losses during training to stabilise slot identities; re-run with identical hyperparameters for a clean comparison.
+3. Experiment with widened dueling heads or noisy nets to target larger Q-gaps while keeping the learned encoder.
+4. Capture representative gameplay (deterministic vs stochastic) to verify qualitative slot usage during rallies.
+
+---
+
+## 2025-10-06 – Slot Stability Instrumentation Prep
+
+**Objective**: equip the slot-attention extractor with auxiliary losses and diagnostics that reward diverse slot usage and penalise reconstruction drift before the next training sweep.
+
+**Code Changes**
+- Added entropy, slot-variance, and lightweight reconstruction regularisers to `SlotAttentionExtractor`, exposing weights + logging via `features_extractor_kwargs`.
+- Modified `PrioritizedDQN.train` so auxiliary losses backpropagate alongside TD error; TensorBoard now records `train/aux/*` metrics for monitoring.
+- Config `configs/objcentric_breakout_slot.yaml` updated with initial weights (`entropy=0.02`, `variance=0.001`, `recon=0.05`) and metric logging enabled.
+
+**Next Steps**
+1. Kick off a fresh `breakout_objenc_slot_dqn` run to validate that auxiliary losses stay bounded and improve slot stability.
+2. Review new TensorBoard traces (`train/aux/slot_attention_entropy`, `train/aux/slot_reconstruction_loss`) and adjust weights if they overwhelm TD loss.
+
+## 2025-10-06 – Hierarchical Controller Scaffolding
+
+**Objective**: prepare infrastructure for an options-based Breakout agent that layers a high-level manager over specialised skills before implementing the full training loop.
+
+**Artifacts added**
+- `configs/hierarchical_breakout_options.yaml` outlining manager/skill hyperparameters and warmups.
+- `src/simple_game/hierarchical/` package with config dataclasses, option/manager controller skeletons, and a placeholder trainer entry point.
+- `train.py` now recognises `model.algo: hierarchical` and points to the scaffolding pending trainer implementation.
+
+**Immediate follow-up**
+1. Flesh out `HierarchicalTrainer.train` to coordinate manager/skill optimisation (likely alternating updates with separate replay buffers).
+2. Decide on intrinsic reward shaping for each skill (ball tracking, serve setup, tunnel push) and wire triggers into env wrappers.
+3. Extend evaluation tooling to log per-option usage, dwell times, and success rates once the trainer is live.
+
+## 2025-10-06 – Slot Stability Run Results
+
+**Artifacts reviewed**: `runs/eval_reports/breakout_objenc_slot_aux/{deterministic,stochastic}/summary.json` from the auxiliary-loss slot-attention run (entropy 0.02, variance 0.001, recon 0.05).
+
+**Key metrics**
+- Deterministic (30 games × seeds 10000/1/2): per-game reward **31.21 ± 0.99**, per-life reward **4.70**, mean length **994 ± 29** frames.
+- Stochastic sweep: per-game reward **31.06 ± 1.47**, per-life reward **4.60**, mean length **982 ± 19** frames.
+- Q-gap widened to **0.40 ± 0.01** (deterministic seeds) from the prior ~0.31, matching the goal of separating action preferences.
+- Serve reliability remains high (deterministic zero-reward lives **4/450**); stochastic zero-reward lives rose to **10/450** (previously 6), driven by a handful of premature exploration serves.
+
+**Comparative highlights**
+- vs. previous slot run: deterministic reward +1.64 points (31.21 vs 29.57), stochastic essentially flat (-0.15). Q-gaps +0.09; per-life reward up ~0.2; variance decreased (std 0.99 vs 2.31), indicating more consistent greedy play.
+- vs. RAM detector: still -4.25 points deterministic but halves zero-reward lives (4 vs 44) and now narrows the gap with stronger Q separation.
+- vs. hybrid detector: deterministic -4.10, stochastic -2.17, yet Q-gaps now exceed hybrid's 0.34 average while preserving low failure rate.
+- vs. pixel DQN: reward remains ≈4.6 lower stochastically, but Q-gap lead shrinks—slots hit 0.40 vs pixel’s ~0.33.
+
+**Interpretation**
+- Auxiliary losses succeeded in stabilising slot identities enough to widen Q-value separation and tighten deterministic variance without hurting average reward.
+- Increased stochastic zero-reward lives show the policy still struggles once randomness reintroduces noisy serves; fine-tuning entropy/variance weights or decaying reconstruction late in training may recover those lives.
+- Overall, the object-centric approach now combines strong serve reliability and more decisive action margins, but exploration is still weaker than RAM/pixel agents—future tweaks should target stochastic robustness (e.g., adaptive entropy weight, noisy nets).
+
+**Next steps**
+1. Sweep auxiliary weights (drop reconstruction late or anneal entropy) to reduce stochastic zero-reward lives.
+2. Log slot attention entropy during long stochastic episodes to confirm stability persists beyond deterministic evaluation.
+3. In parallel, continue preparing hierarchical trainer (options may leverage the now-stable encoder as shared backbone).

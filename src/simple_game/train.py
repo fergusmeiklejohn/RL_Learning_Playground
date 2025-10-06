@@ -257,6 +257,16 @@ def main(config_path: Path) -> None:
             train_env,
             **dqn_kwargs,
         )
+    elif algo == "hierarchical":
+        from .hierarchical.factory import build_config as build_h_config
+        from .hierarchical.trainer import HierarchicalTrainer
+
+        hier_cfg = build_h_config(cfg.get("hierarchical", {}))
+        trainer = HierarchicalTrainer(hier_cfg)
+        raise RuntimeError(
+            "HierarchicalTrainer.train is not yet implemented."
+            " Refer to src/simple_game/hierarchical/ for scaffolding."
+        )
     else:
         raise ValueError(f"Unsupported algorithm specified: {algo}")
 
