@@ -421,3 +421,145 @@ class HierarchicalTrainer:
             agent.save(path)
             skill_paths[name] = path
         return checkpoint_dir, manager_path, skill_paths
+
+    def evaluate_from_checkpoints(
+        self,
+        checkpoint_dir: Path,
+        *,
+        num_games: int = 30,
+        deterministic: bool = True,
+        event_wrapper: bool = True,
+    ) -> dict:
+        """Run greedy (or epsilon-soft) rollouts from saved manager/skills checkpoints."""
+
+        checkpoint_dir = Path(checkpoint_dir)
+        if not checkpoint_dir.exists():
+            raise FileNotFoundError(f"Checkpoint directory '{checkpoint_dir}' not found")
+
+        env = build_env(self.base_cfg, mode="eval", n_envs=1, event_wrapper=event_wrapper)
+        obs_space = env.observation_space
+        action_space = env.action_space
+
+        controller = HierarchicalController(obs_space, action_space, self.cfg, str(self.device))
+        manager_path = checkpoint_dir / "manager.pt"
+        if not manager_path.exists():
+            raise FileNotFoundError(f"Manager checkpoint '{manager_path}' not found")
+
+        manager_state = th.load(manager_path, map_location=self.device)
+        controller.manager.load_state_dict(manager_state["policy"])
+
+        # Build evaluation-only agents (no learning / gradient updates)
+        manager_agent = DQNAgent(
+            controller.manager,
+            len(controller.skill_names()),
+            obs_space.shape,
+            device=self.device,
+            buffer_size=1,
+            batch_size=1,
+            learning_rate=self.cfg.manager_learning_rate,
+            gamma=self.cfg.gamma,
+            target_update_interval=self.cfg.target_update_interval,
+            gradient_updates_per_step=0,
+        )
+        manager_agent.policy.load_state_dict(manager_state["policy"])
+        manager_agent.target.load_state_dict(manager_state["target"])
+        manager_agent.to_eval()
+
+        skill_agents: Dict[str, DQNAgent] = {}
+        for name, skill in controller.skills.items():
+            skill_path = checkpoint_dir / f"skill_{name}.pt"
+            if not skill_path.exists():
+                raise FileNotFoundError(f"Skill checkpoint '{skill_path}' not found")
+            state = th.load(skill_path, map_location=self.device)
+            agent = DQNAgent(
+                skill,
+                action_space.n,
+                obs_space.shape,
+                device=self.device,
+                buffer_size=1,
+                batch_size=1,
+                learning_rate=self.cfg.learning_rate,
+                gamma=self.cfg.gamma,
+                target_update_interval=self.cfg.target_update_interval,
+                gradient_updates_per_step=0,
+            )
+            agent.policy.load_state_dict(state["policy"])
+            agent.target.load_state_dict(state["target"])
+            agent.to_eval()
+            skill_agents[name] = agent
+
+        manager_eps = 0.0 if deterministic else self.cfg.manager_epsilon_end
+        skill_eps = 0.0 if deterministic else self.cfg.epsilon_end
+
+        skill_names = controller.skill_names()
+        skill_usage = {name: 0 for name in skill_names}
+        skill_return_summaries = {name: [] for name in skill_names}
+
+        episode_rewards: list[float] = []
+        episode_lengths: list[int] = []
+
+        for _ in range(num_games):
+            obs_vec = env.reset()
+            obs = np.array(obs_vec[0])
+            done = False
+            ep_reward = 0.0
+            ep_length = 0
+            current_skill: Optional[str] = None
+            current_agent: Optional[DQNAgent] = None
+            option_reward = 0.0
+            option_steps = 0
+
+            while not done:
+                if current_skill is None:
+                    idx = manager_agent.select_action(obs, epsilon=manager_eps)
+                    current_skill = skill_names[idx]
+                    current_agent = skill_agents[current_skill]
+                    skill_usage[current_skill] += 1
+                    option_reward = 0.0
+                    option_steps = 0
+
+                skill_cfg = controller.skill_config(current_skill)
+                action = current_agent.select_action(obs, epsilon=skill_eps)
+                next_obs_vec, rewards_vec, dones_vec, _ = env.step(np.array([action], dtype=np.int64))
+                reward = float(rewards_vec[0])
+                done = bool(dones_vec[0])
+                obs = np.array(next_obs_vec[0])
+
+                ep_reward += reward
+                ep_length += 1
+                option_reward += reward
+                option_steps += 1
+
+                terminate = done or option_steps >= skill_cfg.horizon
+                if skill_cfg.termination_on_success and option_reward > 0:
+                    terminate = True
+
+                if terminate:
+                    skill_return_summaries[current_skill].append(option_reward)
+                    current_skill = None
+                    current_agent = None
+
+            episode_rewards.append(ep_reward)
+            episode_lengths.append(ep_length)
+
+        env.close()
+
+        rewards_np = np.asarray(episode_rewards, dtype=np.float32)
+        lengths_np = np.asarray(episode_lengths, dtype=np.float32)
+        zero_ratio = float((rewards_np == 0.0).mean()) if rewards_np.size else float("nan")
+
+        skill_option_means = {
+            name: (float(np.mean(vals)) if vals else float("nan"))
+            for name, vals in skill_return_summaries.items()
+        }
+
+        return {
+            "games": num_games,
+            "reward_mean": float(rewards_np.mean()) if rewards_np.size else float("nan"),
+            "reward_std": float(rewards_np.std()) if rewards_np.size else float("nan"),
+            "length_mean": float(lengths_np.mean()) if lengths_np.size else float("nan"),
+            "length_std": float(lengths_np.std()) if lengths_np.size else float("nan"),
+            "zero_reward_fraction": zero_ratio,
+            "skill_usage": skill_usage,
+            "skill_option_mean": skill_option_means,
+        }

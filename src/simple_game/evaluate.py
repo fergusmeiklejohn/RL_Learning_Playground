@@ -5,6 +5,7 @@ import argparse
 import importlib
 import csv
 import json
+import os
 import statistics
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -15,6 +16,8 @@ from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 
 from .algos import PrioritizedDQN
+from .hierarchical.factory import build_config as build_hierarchical_config
+from .hierarchical.trainer import HierarchicalTrainer
 from .train import build_env, load_config, select_device
 
 
@@ -500,6 +503,58 @@ def main() -> None:
     base_seed = cfg.get("experiment", {}).get("seed", 0)
 
     device = select_device(args.device)
+    cfg.setdefault("hardware", {})["device"] = device
+    if device == "mps" and cfg["hardware"].get("mps_fallback", True):
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+    algo = cfg["model"].get("algo", "ppo").lower()
+
+    if algo == "hierarchical":
+        checkpoint_dir = args.checkpoint
+        if not checkpoint_dir.is_dir():
+            raise ValueError(
+                "For hierarchical models, --checkpoint must point to the directory"
+                " containing manager.pt and skill_*.pt files"
+            )
+        hier_cfg = build_hierarchical_config(cfg.get("hierarchical", {}))
+        hier_cfg.device = device
+        trainer = HierarchicalTrainer(cfg, hier_cfg)
+        summary = trainer.evaluate_from_checkpoints(
+            checkpoint_dir,
+            num_games=args.num_games,
+            deterministic=args.deterministic,
+            event_wrapper=args.events,
+        )
+
+        print(
+            f"Hierarchical evaluation over {summary['games']} games"
+            f" ({'deterministic' if args.deterministic else 'stochastic'})"
+        )
+        print(
+            f"  Reward mean {summary['reward_mean']:.2f} ± {summary['reward_std']:.2f};"
+            f" length mean {summary['length_mean']:.1f} ± {summary['length_std']:.1f} steps"
+        )
+        zero_pct = summary["zero_reward_fraction"] * 100 if summary["zero_reward_fraction"] == summary["zero_reward_fraction"] else float("nan")
+        print(f"  Zero-reward fraction: {zero_pct:.2f}%")
+        print("  Skill usage:")
+        for name, count in summary["skill_usage"].items():
+            option_mean = summary["skill_option_mean"].get(name, float("nan"))
+            print(f"    {name}: {count} selections, avg option return {option_mean:.2f}")
+
+        if args.output_dir is not None:
+            output_dir = args.output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "config": str(args.config),
+                "checkpoint_dir": str(checkpoint_dir),
+                "deterministic": args.deterministic,
+                "num_games": args.num_games,
+                "events": args.events,
+                "summary": summary,
+            }
+            with (output_dir / "hierarchical_summary.json").open("w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+        return
 
     results: List[EvaluationResult] = []
     for offset in args.seeds:

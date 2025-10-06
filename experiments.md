@@ -397,3 +397,12 @@ at-a-glance ETA feedback as our SB3 runs.
 1. Add skill-specific intrinsic rewards/triggers (e.g., reward `serve_setup` for firing launch successfully, `tunnel_push` for brick hits on the target columns) so the manager receives shaped returns per option.
 2. Reduce epsilon schedules for matured skills while keeping manager exploration higher to encourage option diversity.
 3. Once intrinsic signals are in place, re-run evaluation (the existing script can be re-used once we resolve the ALE re-init segfault, likely by integrating evaluation directly into `HierarchicalTrainer`).
+
+**Evaluation helper**: `python -m src.simple_game.evaluate --config configs/hierarchical_breakout_options.yaml --checkpoint runs/checkpoints/breakout_hier_options` now runs deterministic/stochastic rollouts directly via `HierarchicalTrainer.evaluate_from_checkpoints`, avoiding the ALE segfault and printing per-skill usage.
+
+**Deterministic eval (30 games)**
+- Reward **1.60 ± 3.17**, length **15.9 ± 27.1** steps.
+- Skill usage: `track_ball` 20 selections (avg option return 0.05), `serve_setup` 25 (0.68), `tunnel_push` 34 (0.88).
+- 73% zero-reward games, highlighting that the manager largely picks `tunnel_push`/`serve_setup` without surviving long enough to score.
+
+Next evaluation: run the same command with `--deterministic` omitted for stochastic metrics once intrinsic rewards are added.
