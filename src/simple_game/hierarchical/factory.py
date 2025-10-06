@@ -33,6 +33,8 @@ def build_config(raw: Dict[str, Any]) -> HierarchicalConfig:
             )
         )
 
+    training = raw.get("training") or {}
+
     return HierarchicalConfig(
         manager=manager,
         skills=skills,
@@ -46,5 +48,18 @@ def build_config(raw: Dict[str, Any]) -> HierarchicalConfig:
         shared_encoder=bool(raw.get("shared_encoder", True)),
         encoder_dim=int(raw.get("encoder_dim", 256)),
         device=raw.get("device"),
+        buffer_size=int(training.get("buffer_size", 100_000)),
+        batch_size=int(training.get("batch_size", 64)),
+        learning_rate=float(training.get("learning_rate", 2.5e-4)),
+        gamma=float(training.get("gamma", 0.99)),
+        target_update_interval=int(training.get("target_update_interval", 2_000)),
+        epsilon_start=float(training.get("epsilon_start", 1.0)),
+        epsilon_end=float(training.get("epsilon_end", 0.05)),
+        epsilon_decay_steps=int(training.get("epsilon_decay_steps", 1_000_000)),
+        manager_learning_rate=float(training.get("manager_learning_rate", training.get("learning_rate", 2.5e-4))),
+        manager_epsilon_start=float(training.get("manager_epsilon_start", training.get("epsilon_start", 1.0))),
+        manager_epsilon_end=float(training.get("manager_epsilon_end", training.get("epsilon_end", 0.05))),
+        manager_epsilon_decay_steps=int(training.get("manager_epsilon_decay_steps", 1_500_000)),
+        gradient_updates_per_step=int(training.get("gradient_updates_per_step", 1)),
+        eval_games=int(training.get("eval_games", 10)),
     )
-

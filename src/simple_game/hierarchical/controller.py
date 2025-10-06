@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch as th
 import torch.nn as nn
@@ -20,6 +20,8 @@ class OptionState:
     step_count: int = 0
     terminated: bool = False
     reward_accumulator: float = 0.0
+    start_observation: Optional[Any] = None
+    option_index: Optional[int] = None
 
 
 class SkillPolicy(nn.Module):
@@ -87,15 +89,15 @@ class HierarchicalController:
         self.option_state = OptionState()
         self.manager_hidden: Optional[th.Tensor] = None
 
-    def reset_option(self, skill_name: str) -> None:
+    def reset_option(self, skill_name: str, *, start_obs: Optional[Any] = None, option_index: Optional[int] = None) -> None:
         self.active_option = skill_name
-        self.option_state = OptionState()
+        self.option_state = OptionState(start_observation=start_obs, option_index=option_index)
 
     def select_option(self, obs: th.Tensor) -> str:
         obs = obs.to(self.device)
         option_idx = self.manager.act(obs.unsqueeze(0), temperature=self.config.manager.temperature)
         option_name = self.config.skills[int(option_idx.item())].name
-        self.reset_option(option_name)
+        self.reset_option(option_name, start_obs=None, option_index=int(option_idx.item()))
         return option_name
 
     def act(self, obs: th.Tensor) -> int:
@@ -114,3 +116,9 @@ class HierarchicalController:
             and self.option_state.step_count >= self.skill_specs[self.active_option].horizon
         ):
             self.option_state.terminated = True
+
+    def skill_config(self, name: str) -> SkillConfig:
+        return self.skill_specs[name]
+
+    def skill_names(self) -> list[str]:
+        return list(self.skill_specs.keys())

@@ -262,11 +262,13 @@ def main(config_path: Path) -> None:
         from .hierarchical.trainer import HierarchicalTrainer
 
         hier_cfg = build_h_config(cfg.get("hierarchical", {}))
-        trainer = HierarchicalTrainer(hier_cfg)
-        raise RuntimeError(
-            "HierarchicalTrainer.train is not yet implemented."
-            " Refer to src/simple_game/hierarchical/ for scaffolding."
+        trainer = HierarchicalTrainer(cfg, hier_cfg)
+        artifacts = trainer.train()
+        print(
+            f"[train] hierarchical checkpoints saved under {artifacts.checkpoint_dir};"
+            f" manager={artifacts.manager_path}"
         )
+        return
     else:
         raise ValueError(f"Unsupported algorithm specified: {algo}")
 

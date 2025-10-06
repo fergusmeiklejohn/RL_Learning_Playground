@@ -7,6 +7,15 @@ experiment:
   save_interval: 250000
   notes: "Two-level controller: manager selects skills, low-level skills drive paddle/ball behaviors"
 
+environment:
+  id: ALE/Breakout-v5
+  frame_skip: 4
+  frame_stack: 4
+  terminate_on_life_loss: true
+
+model:
+  algo: hierarchical
+
 hierarchical:
   manager:
     horizon: 32
@@ -37,6 +46,22 @@ hierarchical:
       failure_penalty: -0.3
       termination_on_success: true
       warmup_steps: 30000
+
+training:
+  buffer_size: 100000
+  batch_size: 64
+  learning_rate: 0.00025
+  gamma: 0.99
+  target_update_interval: 2000
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay_steps: 1000000
+  manager_learning_rate: 0.00025
+  manager_epsilon_start: 1.0
+  manager_epsilon_end: 0.05
+  manager_epsilon_decay_steps: 1500000
+  gradient_updates_per_step: 1
+  eval_games: 10
 
 hardware:
   device: auto

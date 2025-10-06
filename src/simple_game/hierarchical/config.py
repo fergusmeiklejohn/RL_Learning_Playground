@@ -46,4 +46,18 @@ class HierarchicalConfig:
     shared_encoder: bool = True
     encoder_dim: int = 256
     device: Optional[str] = None
+    buffer_size: int = 100_000
+    batch_size: int = 64
+    learning_rate: float = 2.5e-4
+    gamma: float = 0.99
+    target_update_interval: int = 2_000
+    epsilon_start: float = 1.0
+    epsilon_end: float = 0.05
+    epsilon_decay_steps: int = 1_000_000
+    manager_learning_rate: float = 2.5e-4
+    manager_epsilon_start: float = 1.0
+    manager_epsilon_end: float = 0.05
+    manager_epsilon_decay_steps: int = 1_500_000
+    gradient_updates_per_step: int = 1
+    eval_games: int = 10
 

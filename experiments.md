@@ -364,3 +364,12 @@
 1. Sweep auxiliary weights (drop reconstruction late or anneal entropy) to reduce stochastic zero-reward lives.
 2. Log slot attention entropy during long stochastic episodes to confirm stability persists beyond deterministic evaluation.
 3. In parallel, continue preparing hierarchical trainer (options may leverage the now-stable encoder as shared backbone).
+
+## 2025-10-06 – Hierarchical Trainer Implementation
+
+**Summary**: implemented a first-pass two-level DQN trainer (`src/simple_game/hierarchical/trainer.py`) that co-trains skill policies and a high-level manager directly from pixels. Each skill and the manager maintain their own replay buffers, epsilon schedules, and target networks; option bonuses (`success_reward`/`failure_penalty`) feed into the manager’s return. Training uses 8-bit frame buffers, configurable hyperparameters, periodic logging, evaluation, and checkpointing. `train.py` now routes `model.algo: hierarchical` configs (see `configs/hierarchical_breakout_options.yaml`) to the new trainer.
+
+**Next actions**
+1. Implement skill-specific intrinsic rewards/triggers (e.g., detect tunnel events) to replace the current "reward > 0" success heuristic.
+2. Add evaluation hooks mirroring PPO/DQN tooling (per-life CSVs, option usage stats).
+3. Profile learning stability and calibrate epsilon/target update schedules before launching the first hierarchical Breakout run.
