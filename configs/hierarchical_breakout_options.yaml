@@ -1,6 +1,6 @@
 # Hierarchical Breakout experiment draft using option-based control
 experiment:
-  name: breakout_hier_options
+  name: breakout_hier_options_intrinsic
   seed: 777
   total_timesteps: 3000000
   eval_interval: 100000
@@ -35,6 +35,13 @@ hierarchical:
       failure_penalty: -0.2
       termination_on_success: false
       warmup_steps: 20000
+      intrinsic:
+        step: 0.01
+        terminal_penalty: -0.5
+      intrinsic_weight: 0.0
+      epsilon_start: 0.3
+      epsilon_end: 0.05
+      epsilon_decay_steps: 400000
     - name: serve_setup
       trigger: "pre_serve"
       horizon: 12
@@ -42,6 +49,14 @@ hierarchical:
       failure_penalty: -0.5
       termination_on_success: true
       warmup_steps: 10000
+      intrinsic:
+        fire_bonus: 0.5
+        success_bonus: 0.5
+        failure_penalty: -0.3
+      intrinsic_weight: 0.5
+      epsilon_start: 0.6
+      epsilon_end: 0.05
+      epsilon_decay_steps: 600000
     - name: tunnel_push
       trigger: "left_tunnel"
       horizon: 24
@@ -49,6 +64,13 @@ hierarchical:
       failure_penalty: -0.3
       termination_on_success: true
       warmup_steps: 30000
+      intrinsic:
+        brick_bonus: 0.3
+        stay_bonus: 0.01
+      intrinsic_weight: 1.0
+      epsilon_start: 0.8
+      epsilon_end: 0.05
+      epsilon_decay_steps: 800000
 
 training:
   buffer_size: 100000

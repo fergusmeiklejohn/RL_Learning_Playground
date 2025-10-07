@@ -30,6 +30,26 @@ def build_config(raw: Dict[str, Any]) -> HierarchicalConfig:
                 failure_penalty=float(entry.get("failure_penalty", 0.0)),
                 termination_on_success=bool(entry.get("termination_on_success", True)),
                 warmup_steps=int(entry.get("warmup_steps", 0)),
+                intrinsic={
+                    str(k): float(v)
+                    for k, v in (entry.get("intrinsic", {}) or {}).items()
+                },
+                intrinsic_weight=float(entry.get("intrinsic_weight", 1.0)),
+                epsilon_start=(
+                    float(entry["epsilon_start"])
+                    if entry.get("epsilon_start") is not None
+                    else None
+                ),
+                epsilon_end=(
+                    float(entry["epsilon_end"])
+                    if entry.get("epsilon_end") is not None
+                    else None
+                ),
+                epsilon_decay_steps=(
+                    int(entry["epsilon_decay_steps"])
+                    if entry.get("epsilon_decay_steps") is not None
+                    else None
+                ),
             )
         )
 

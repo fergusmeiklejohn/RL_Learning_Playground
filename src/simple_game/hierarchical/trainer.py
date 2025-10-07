@@ -11,6 +11,7 @@ from typing import Dict, Optional
 import numpy as np
 import torch as th
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 
 try:  # pragma: no cover - optional dependency for richer progress display
     from tqdm.auto import tqdm
@@ -18,7 +19,7 @@ except Exception:  # pragma: no cover - fallback when tqdm missing
     tqdm = None
 
 from ..train import build_env, ensure_dirs
-from .config import HierarchicalConfig
+from .config import HierarchicalConfig, SkillConfig
 from .controller import HierarchicalController
 
 
@@ -162,6 +163,7 @@ class HierarchicalTrainer:
         self.cfg = cfg
         self.device = th.device(cfg.device or ("mps" if th.backends.mps.is_available() else "cpu"))
         self.controller: Optional[HierarchicalController] = None
+        self.writer: Optional[SummaryWriter] = None
 
     def build_controller(self, obs_space, action_space) -> HierarchicalController:
         controller = HierarchicalController(obs_space, action_space, self.cfg, str(self.device))
@@ -174,8 +176,71 @@ class HierarchicalTrainer:
         fraction = min(1.0, step / decay_steps)
         return float(start + fraction * (end - start))
 
+    def _intrinsic_reward(
+        self,
+        skill_cfg: "SkillConfig",
+        *,
+        skill_name: str,
+        action: int,
+        extrinsic_reward: float,
+        done: bool,
+        option_steps: int,
+        option_reward: float,
+    ) -> float:
+        """Compute simple skill-specific shaping rewards."""
+
+        settings = skill_cfg.intrinsic or {}
+        bonus = 0.0
+
+        if not settings:
+            return bonus
+
+        # Shared helpers
+        step_bonus = settings.get("step", 0.0)
+        if step_bonus:
+            bonus += step_bonus
+
+        if skill_name == "track_ball":
+            term_penalty = settings.get("terminal_penalty", 0.0)
+            if done:
+                bonus += term_penalty
+
+        elif skill_name == "serve_setup":
+            fire_bonus = settings.get("fire_bonus", 0.0)
+            if fire_bonus and action == 1 and option_steps == 1:
+                bonus += fire_bonus
+            success_bonus = settings.get("success_bonus", 0.0)
+            if success_bonus and extrinsic_reward > 0.0:
+                bonus += success_bonus
+            fail_penalty = settings.get("failure_penalty", 0.0)
+            if fail_penalty and done and option_reward <= 0.0:
+                bonus += fail_penalty
+
+        elif skill_name == "tunnel_push":
+            brick_bonus = settings.get("brick_bonus", 0.0)
+            if brick_bonus and extrinsic_reward > 0.0:
+                bonus += brick_bonus * extrinsic_reward
+            stay_bonus = settings.get("stay_bonus", 0.0)
+            if stay_bonus:
+                bonus += stay_bonus
+
+        else:
+            # Generic hooks per key for future skills
+            if settings.get("success_bonus", 0.0) and extrinsic_reward > 0.0:
+                bonus += settings.get("success_bonus", 0.0)
+            if settings.get("failure_penalty", 0.0) and done and option_reward <= 0.0:
+                bonus += settings.get("failure_penalty", 0.0)
+
+        return bonus
+
     def train(self) -> TrainerArtifacts:
         ensure_dirs(self.base_cfg)
+        tb_root = self.base_cfg.get("logging", {}).get("tensorboard_log")
+        if tb_root:
+            log_dir = Path(tb_root) / self.base_cfg["experiment"]["name"]
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self.writer = SummaryWriter(log_dir.as_posix())
+
         env = build_env(self.base_cfg, mode="train", n_envs=1, event_wrapper=True)
         observation_space = env.observation_space
         action_space = env.action_space
@@ -215,6 +280,7 @@ class HierarchicalTrainer:
         current_skill_index: Optional[int] = None
         option_reward = 0.0
         option_steps = 0
+        option_intrinsic = 0.0
         option_start_obs = obs.copy()
         episode_reward = 0.0
         episode_length = 0
@@ -222,6 +288,14 @@ class HierarchicalTrainer:
         episode_lengths = []
         manager_losses = []
         skill_losses = []
+
+        skill_names = controller.skill_names()
+        skill_selection_counts = {name: 0 for name in skill_names}
+        skill_selection_counts_log = {name: 0 for name in skill_names}
+        skill_intrinsic_totals = {name: 0.0 for name in skill_names}
+        skill_intrinsic_totals_log = {name: 0.0 for name in skill_names}
+        skill_intrinsic_counts = {name: 0 for name in skill_names}
+        skill_intrinsic_counts_log = {name: 0 for name in skill_names}
 
         total_steps = self.cfg.total_timesteps
         log_interval = self.base_cfg.get("logging", {}).get("log_interval", 1000)
@@ -242,16 +316,19 @@ class HierarchicalTrainer:
                 )
                 current_skill_index = manager_agent.select_action(obs, epsilon)
                 current_skill = controller.skill_names()[current_skill_index]
+                skill_selection_counts[current_skill] += 1
+                skill_selection_counts_log[current_skill] += 1
                 option_reward = 0.0
                 option_steps = 0
+                option_intrinsic = 0.0
                 option_start_obs = obs.copy()
 
             skill_cfg = controller.skill_config(current_skill)
             skill_agent = skill_agents[current_skill]
             epsilon_skill = self._epsilon(
-                self.cfg.epsilon_start,
-                self.cfg.epsilon_end,
-                self.cfg.epsilon_decay_steps,
+                skill_cfg.epsilon_start if skill_cfg.epsilon_start is not None else self.cfg.epsilon_start,
+                skill_cfg.epsilon_end if skill_cfg.epsilon_end is not None else self.cfg.epsilon_end,
+                skill_cfg.epsilon_decay_steps if skill_cfg.epsilon_decay_steps is not None else self.cfg.epsilon_decay_steps,
                 step,
             )
             action = skill_agent.select_action(obs, epsilon_skill)
@@ -261,14 +338,28 @@ class HierarchicalTrainer:
             done = bool(dones_vec[0])
             next_obs = np.array(next_obs_vec[0])
 
-            skill_agent.store(obs.copy(), action, reward, next_obs.copy(), done)
+            # Intrinsic shaping for skill learning only
+            next_option_steps = option_steps + 1
+            intrinsic = self._intrinsic_reward(
+                skill_cfg,
+                skill_name=current_skill,
+                action=action,
+                extrinsic_reward=reward,
+                done=done,
+                option_steps=next_option_steps,
+                option_reward=option_reward + reward,
+            )
+            shaped_reward = reward + intrinsic
+
+            skill_agent.store(obs.copy(), action, shaped_reward, next_obs.copy(), done)
             if step > self.cfg.skill_warmup:
                 loss = skill_agent.update()
                 if loss is not None:
                     skill_losses.append(loss)
 
             option_reward += reward
-            option_steps += 1
+            option_steps = next_option_steps
+            option_intrinsic += intrinsic
 
             episode_reward += reward
             episode_length += 1
@@ -281,7 +372,12 @@ class HierarchicalTrainer:
 
             if terminated and current_skill is not None and current_skill_index is not None:
                 bonus = skill_cfg.success_reward if option_reward > 0 else skill_cfg.failure_penalty
-                manager_reward = option_reward + bonus
+                intrinsic_weight = getattr(skill_cfg, "intrinsic_weight", 1.0)
+                skill_intrinsic_totals[current_skill] += option_intrinsic
+                skill_intrinsic_totals_log[current_skill] += option_intrinsic
+                skill_intrinsic_counts[current_skill] += 1
+                skill_intrinsic_counts_log[current_skill] += 1
+                manager_reward = option_reward + bonus + intrinsic_weight * option_intrinsic
                 manager_agent.store(option_start_obs.copy(), current_skill_index, manager_reward, obs.copy(), done)
                 if step > self.cfg.high_level_warmup:
                     loss = manager_agent.update()
@@ -289,6 +385,7 @@ class HierarchicalTrainer:
                         manager_losses.append(loss)
                 current_skill = None
                 current_skill_index = None
+                option_intrinsic = 0.0
 
             if done:
                 episode_rewards.append(episode_reward)
@@ -301,6 +398,7 @@ class HierarchicalTrainer:
                 current_skill_index = None
                 option_reward = 0.0
                 option_steps = 0
+                option_intrinsic = 0.0
                 option_start_obs = obs.copy()
 
             if progress is not None:
@@ -340,8 +438,38 @@ class HierarchicalTrainer:
                         f" skill_loss={avg_skill_loss:.4f} manager_loss={avg_manager_loss:.4f}"
                     )
 
+                if self.writer is not None:
+                    self.writer.add_scalar("train/avg_reward", avg_reward, step)
+                    self.writer.add_scalar("train/avg_length", avg_len, step)
+                    self.writer.add_scalar(
+                        "train/manager_eps",
+                        self._epsilon(
+                            self.cfg.manager_epsilon_start,
+                            self.cfg.manager_epsilon_end,
+                            self.cfg.manager_epsilon_decay_steps,
+                            step,
+                        ),
+                        step,
+                    )
+                    for name in skill_names:
+                        usage_rate = skill_selection_counts_log[name] / log_interval
+                        self.writer.add_scalar(f"train/skill_usage/{name}", usage_rate, step)
+                        if skill_intrinsic_counts_log[name] > 0:
+                            intrinsic_avg = skill_intrinsic_totals_log[name] / skill_intrinsic_counts_log[name]
+                            self.writer.add_scalar(
+                                f"train/skill_intrinsic/{name}", intrinsic_avg, step
+                            )
+
+                for name in skill_names:
+                    skill_selection_counts_log[name] = 0
+                    skill_intrinsic_totals_log[name] = 0.0
+                    skill_intrinsic_counts_log[name] = 0
+
             if self.cfg.eval_interval and step >= next_eval:
-                self._evaluate(env, manager_agent, skill_agents)
+                eval_summary = self._evaluate(env, manager_agent, skill_agents)
+                if self.writer is not None:
+                    self.writer.add_scalar("eval/reward_mean", eval_summary["reward_mean"], step)
+                    self.writer.add_scalar("eval/length_mean", eval_summary["length_mean"], step)
                 next_eval += self.cfg.eval_interval
 
             if self.cfg.checkpoint_interval and step >= next_checkpoint:
@@ -352,6 +480,10 @@ class HierarchicalTrainer:
         if progress is not None:
             progress.close()
         env.close()
+        if self.writer is not None:
+            self.writer.flush()
+            self.writer.close()
+            self.writer = None
         return TrainerArtifacts(
             checkpoint_dir=str(checkpoint_dir),
             manager_path=str(manager_path) if manager_path else None,
@@ -359,7 +491,7 @@ class HierarchicalTrainer:
             training_steps=total_steps,
         )
 
-    def _evaluate(self, env, manager_agent: DQNAgent, skill_agents: Dict[str, DQNAgent]) -> None:
+    def _evaluate(self, env, manager_agent: DQNAgent, skill_agents: Dict[str, DQNAgent]) -> dict:
         eval_env = build_env(self.base_cfg, mode="eval", n_envs=1, event_wrapper=True)
         obs_vec = eval_env.reset()
         obs = np.array(obs_vec[0])
@@ -402,12 +534,19 @@ class HierarchicalTrainer:
                     total_lengths.append(episode_len)
                     obs_vec = eval_env.reset()
                     obs = np.array(obs_vec[0])
+        summary = {
+            "reward_mean": float(np.mean(total_rewards)) if total_rewards else float("nan"),
+            "reward_std": float(np.std(total_rewards)) if total_rewards else float("nan"),
+            "length_mean": float(np.mean(total_lengths)) if total_lengths else float("nan"),
+            "length_std": float(np.std(total_lengths)) if total_lengths else float("nan"),
+        }
         if total_rewards:
             print(
-                f"[hier-eval] reward_mean={np.mean(total_rewards):.2f}"
-                f" ±{np.std(total_rewards):.2f} length_mean={np.mean(total_lengths):.1f}"
+                f"[hier-eval] reward_mean={summary['reward_mean']:.2f}"
+                f" ±{summary['reward_std']:.2f} length_mean={summary['length_mean']:.1f}"
             )
         eval_env.close()
+        return summary
 
     def _save_checkpoints(self, manager_agent: DQNAgent, skill_agents: Dict[str, DQNAgent]) -> tuple[Path, Optional[Path], Dict[str, Path]]:
         checkpoint_dir = Path(self.base_cfg["logging"]["checkpoint_dir"]) / self.base_cfg["experiment"]["name"]

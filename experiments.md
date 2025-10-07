@@ -406,3 +406,19 @@ at-a-glance ETA feedback as our SB3 runs.
 - 73% zero-reward games, highlighting that the manager largely picks `tunnel_push`/`serve_setup` without surviving long enough to score.
 
 Next evaluation: run the same command with `--deterministic` omitted for stochastic metrics once intrinsic rewards are added.
+
+## 2025-10-07 – Hierarchical Intrinsic Rewards & Logging
+
+Implemented per-skill epsilon schedules, intrinsic shaping, manager intrinsic credits, TensorBoard logging, and integrated evaluation. Short smoke (64 steps) verifies training + deterministic eval command.
+
+Deterministic eval (10 games) after smoke: reward **0.80 ± 0.87**, length **11.3 ± 6.2** steps, zero-reward **50%** (expected for tiny run). Serve_setup selected 18 times (option return 0.44), other skills unused at this scale.
+
+Full run command (12h budget):
+```
+conda run -n simple-game python -m src.simple_game.train --config configs/hierarchical_breakout_options.yaml
+```
+To evaluate checkpoints mid-run:
+```
+python -m src.simple_game.evaluate --config configs/hierarchical_breakout_options.yaml --checkpoint runs/checkpoints/breakout_hier_options_intrinsic --num-games 30 --deterministic
+```
+Consider launching a short 200k-step preview before the full 3M sweep to ensure intrinsic shaping behaves as intended.

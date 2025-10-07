@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -16,6 +16,11 @@ class SkillConfig:
     failure_penalty: float = 0.0
     termination_on_success: bool = True
     warmup_steps: int = 0
+    intrinsic: Dict[str, float] = field(default_factory=dict)
+    intrinsic_weight: float = 1.0
+    epsilon_start: Optional[float] = None
+    epsilon_end: Optional[float] = None
+    epsilon_decay_steps: Optional[int] = None
 
 
 @dataclass
@@ -60,4 +65,3 @@ class HierarchicalConfig:
     manager_epsilon_decay_steps: int = 1_500_000
     gradient_updates_per_step: int = 1
     eval_games: int = 10
-
