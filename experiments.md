@@ -422,3 +422,30 @@ To evaluate checkpoints mid-run:
 python -m src.simple_game.evaluate --config configs/hierarchical_breakout_options.yaml --checkpoint runs/checkpoints/breakout_hier_options_intrinsic --num-games 30 --deterministic
 ```
 Consider launching a short 200k-step preview before the full 3M sweep to ensure intrinsic shaping behaves as intended.
+
+## 2025-10-07 – Hierarchical Intrinsic Options Run Results
+
+**Config**: `configs/hierarchical_breakout_options.yaml` (`breakout_hier_options_intrinsic`)
+
+**Artifacts reviewed**: TensorBoard traces (`runs/tensorboard/breakout_hier_options_intrinsic`), checkpoints (`runs/checkpoints/breakout_hier_options_intrinsic/{manager,skill_*.pt}`), deterministic & stochastic evaluation exports (`runs/eval_reports/breakout_hier_options_intrinsic/*/hierarchical_summary.json`).
+
+**Training highlights**
+- 3M-step sweep with intrinsic shaping for all options; manager epsilon decayed to **0.05** by the end.
+- `train/avg_reward` briefly crested at **5.3** around 2.59M steps but regressed to **0** during the final window; `train/avg_length` mirrored the drop (peak **81.7**, final **2**), signalling late-collapse of skill sequencing.
+- Evaluation checkpoints every 100k steps remained low: `eval/reward_mean` fluctuated between **0.6–3.2** with a last-five mean **≈2.16**; `eval/length_mean` mostly sat in the **16–27** step band aside from a single 689-step outlier at 3.0M (rare extended volley).
+- Option usage stayed sparse: final sampled rates (`train/skill_usage` last point) `track_ball` **11%**, `tunnel_push` **8%**, `serve_setup` **0%**; the 100-step moving average for `serve_setup` never exceeded **3%**.
+- Intrinsic signals split by skill: `serve_setup` finished positive (**0.73**) and `tunnel_push` modest (**0.27**), but `track_ball` averaged negative (**-0.47**), suggesting the shaping terms are discouraging its selection during long volleys.
+
+**Evaluation (30-game rollouts via `evaluate.py`)**
+- Deterministic: reward **2.77 ± 3.52**, length **248 ± 1190** (variance dominated by one 1200-step marathon), zero-reward rate **50%**. Skill picks: `track_ball` **288** (mean option return **0.03**), `serve_setup` **69** (**0.20**), `tunnel_push` **143** (**0.41**).
+- Stochastic (ε=0.05 for manager/skills): reward **2.70 ± 3.98**, length **26.4 ± 34.5**, zero-reward rate **53%**. Skill picks collapse (`track_ball` **28**, `serve_setup` **20**, `tunnel_push` **58**) but per-option returns inflate (0.54 / 0.75 / 0.88), indicating that when an option does trigger it often terminates quickly with a shaped bonus rather than true scoring.
+
+**Takeaways**
+- Intrinsic bonuses succeeded in rewarding `serve_setup`/`tunnel_push` for short successes, yet the manager seldom selects them; half the games still end without breaking a single brick.
+- Negative shaping on `track_ball` plus rapid epsilon decay appear to suppress long volleys—skills hand off too frequently, leading to horizon resets and lost serves.
+- Deterministic longevity hinges on rare outlier episodes; the policy lacks a reliable serve sequence and never approaches prior DQN baselines on mean score.
+
+**Next steps**
+1. Rebalance shaping: remove the per-step penalty on `track_ball`, boost `serve_setup` warmup horizon, and raise `intrinsic_reward_scale` so the manager sees clear option-value gaps.
+2. Log option dwell time and termination causes to verify whether options terminate due to horizon exhaustion vs. success; feed those stats back into skill triggers.
+3. Add curriculum-style manager epsilon decay (keep >0.2 until rewards exceed threshold) to preserve exploration while the skill policies mature, then rerun a shorter 500k-step pilot before another 3M sweep.

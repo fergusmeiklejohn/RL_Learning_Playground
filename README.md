@@ -2,6 +2,14 @@
 
 This project aims to learn the basics of RL by training different reinforcement learning agents on classic Atari games using [Gymnasium](https://gymnasium.farama.org/) environments and [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) on an Apple Silicon (M3 Max) Mac running macOS. The goal is to keep the workflow transparent by documenting decisions, trade-offs, and alternatives.
 
+## Project Status & Key Learnings
+- Built an Apple Silicon-friendly RL stack (custom `SimpleNatureCNN`, lazy Gymnasium imports) plus an evaluation CLI that exports per-life/per-game/Q-gap stats so every experiment runs with reproducible configs and diagnostics.
+- PPO baseline (2M steps) settles near 22 reward per game (per-life ≈3.7), highlighting persistent serve-drop failures and teaching us to trust Monitor game totals rather than per-life resets when reading SB3 logs.
+- Prioritized dueling Double-DQN (3M steps) reaches 33.8 ± 3.2 deterministic and 35.7 ± 1.5 stochastic reward with 4–6× fewer zero-reward lives than PPO, showing replay + dueling heads accelerate learning under sparse Breakout rewards.
+- RAM-tap detector DQN pushes greedy reward to 35.46 ± 0.53, stretches games to ~1,061 frames, and cuts zero-reward lives to 9.8%, albeit with a stochastic drop to 33.24 as exploration samples tie-valued actions.
+- Hybrid RAM+pixel features halve zero-reward lives again (5.8%) without widening Q-gaps (~0.34), while slot-attention + auxiliary losses widen gaps to 0.40 and deliver 31.2 reward but still trail RAM baselines under exploration.
+- Hierarchical options agent trains end-to-end yet plateaus around 2.7 reward with >50% zero-reward games; upcoming work rebalances intrinsic shaping, logs option dwell times, and slows epsilon decay before the next sweep.
+
 ## High-Level Plan
 
 1. **Environment provisioning**  
